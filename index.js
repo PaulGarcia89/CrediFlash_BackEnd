@@ -3,11 +3,12 @@ require('dotenv').config();
 const app = require('./src/app');
 
 const PORT = process.env.PORT || 5001;
+const usingDatabaseUrl = Boolean(process.env.DATABASE_URL);
 
 console.log('🚀 Iniciando API Crediflash...');
 console.log('📊 Entorno:', process.env.NODE_ENV || 'development');
-console.log('🗄️  Base de datos:', process.env.DB_NAME || 'crediflash');
-console.log('🌐 Servidor:', process.env.DB_HOST || 'localhost');
+console.log('🗄️  Base de datos:', usingDatabaseUrl ? 'DATABASE_URL' : (process.env.DB_NAME || 'crediflash'));
+console.log('🌐 Servidor DB:', usingDatabaseUrl ? 'provisto por DATABASE_URL' : (process.env.DB_HOST || 'localhost'));
 
 const startServer = async () => {
   try {

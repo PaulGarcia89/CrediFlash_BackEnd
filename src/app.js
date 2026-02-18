@@ -19,13 +19,30 @@ const app = express();
 const environment = process.env.NODE_ENV || 'development';
 const corsOrigins = (process.env.CORS_ORIGIN || 'http://localhost:3000,http://localhost:5173')
   .split(',')
-  .map(origin => origin.trim());
+  .map(origin => origin.trim())
+  .filter(Boolean)
+  .map(origin => origin.replace(/\/$/, ''));
+
+const corsOriginSet = new Set(corsOrigins);
 
 // Middlewares
 app.use(cors({
-  origin: corsOrigins,
-  credentials: true
+  origin(origin, callback) {
+    // Permite requests sin Origin (curl, health checks, server-to-server)
+    if (!origin) return callback(null, true);
+
+    const normalizedOrigin = origin.replace(/\/$/, '');
+    if (corsOriginSet.has(normalizedOrigin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error(`CORS bloqueado para origin: ${origin}`));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
+app.options('*', cors());
 
 app.use(morgan(environment === 'production' ? 'combined' : 'dev'));
 app.use(express.json());
