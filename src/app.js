@@ -166,12 +166,30 @@ app.get('/health', async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Health check failed:', error);
+    const dbUrl = process.env.DATABASE_URL || '';
+    let dbHost = null;
+    try {
+      if (dbUrl) {
+        dbHost = new URL(dbUrl).hostname;
+      }
+    } catch (_) {
+      dbHost = null;
+    }
+
+    const diagnostic = {
+      code: error?.parent?.code || error?.original?.code || null,
+      name: error?.name || null,
+      message: error?.message || error?.parent?.message || error?.original?.message || 'Database connection error',
+      host: dbHost || process.env.DB_HOST || null
+    };
+
     res.status(503).json({
       status: 'ERROR',
       service: 'crediflash-backend',
       database: 'disconnected',
       timestamp: new Date().toISOString(),
-      error: error.message
+      error: diagnostic.message,
+      diagnostic
     });
   }
 });
