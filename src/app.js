@@ -47,7 +47,7 @@ app.options('*', cors());
 app.use(morgan(environment === 'production' ? 'combined' : 'dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+app.use('/uploads', express.static(path.join(__dirname, '..', '..', 'uploads')));
 
 // ========== RUTAS API PRINCIPALES ==========
 app.use('/api', routes);

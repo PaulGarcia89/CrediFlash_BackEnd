@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const router = express.Router();
 const { SolicitudDocumento } = require('../models');
-const { authenticateToken } = require('../middleware/auth');
+const { authenticateToken, requireRole } = require('../middleware/auth');
 
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
 
@@ -48,5 +48,45 @@ router.get('/:id/download', authenticateToken, async (req, res) => {
     });
   }
 });
+
+router.delete(
+  '/:id',
+  authenticateToken,
+  requireRole('ANALISTA', 'SUPERVISOR', 'ADMINISTRADOR'),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      const documento = await SolicitudDocumento.findByPk(id);
+      if (!documento) {
+        return res.status(404).json({
+          success: false,
+          message: 'Documento no encontrado'
+        });
+      }
+
+      const rutaNormalizada = String(documento.ruta || '').replace(/\\/g, '/');
+      const rutaAbsoluta = path.resolve(PROJECT_ROOT, rutaNormalizada);
+      const uploadsRoot = path.resolve(PROJECT_ROOT, 'uploads');
+
+      if (rutaAbsoluta.startsWith(uploadsRoot) && fs.existsSync(rutaAbsoluta)) {
+        await fs.promises.unlink(rutaAbsoluta).catch(() => null);
+      }
+
+      await documento.destroy();
+
+      return res.json({
+        success: true,
+        message: 'Documento eliminado correctamente'
+      });
+    } catch (error) {
+      console.error('Error eliminando documento:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Error al eliminar el documento'
+      });
+    }
+  }
+);
 
 module.exports = router;
