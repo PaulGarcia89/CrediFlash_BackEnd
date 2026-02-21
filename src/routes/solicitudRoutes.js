@@ -64,6 +64,12 @@ const uploadSolicitudDocumentos = (req, res, next) => {
   });
 };
 
+const construirUrlDocumento = (req, rutaRelativa = '') => {
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  const rutaNormalizada = String(rutaRelativa || '').replace(/\\/g, '/').replace(/^\/+/, '');
+  return `${baseUrl}/${rutaNormalizada}`;
+};
+
 const eliminarArchivos = async (archivos = []) => {
   if (!archivos || archivos.length === 0) return;
   await Promise.all(
@@ -889,9 +895,31 @@ router.get('/cliente/:cliente_id', authenticateToken, async (req, res) => {
           model: Cliente, 
           as: 'cliente',
           attributes: ['id', 'nombre', 'apellido']
+        },
+        {
+          model: SolicitudDocumento,
+          as: 'documentos',
+          attributes: ['id', 'nombre_original', 'mime_type', 'ruta', 'size_bytes', 'creado_en']
         }
       ],
       order: [['creado_en', 'DESC']]
+    });
+
+    const solicitudesEstandarizadas = solicitudes.map((solicitud) => {
+      const payload = solicitud.toJSON();
+      const documentos = Array.isArray(payload.documentos) ? payload.documentos : [];
+      return {
+        ...payload,
+        documentos: documentos.map((doc) => ({
+          id: doc.id,
+          nombre: doc.nombre_original,
+          mime_type: doc.mime_type,
+          url: construirUrlDocumento(req, doc.ruta),
+          download_url: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}/download`,
+          size_bytes: doc.size_bytes,
+          fecha_subida: doc.creado_en
+        }))
+      };
     });
 
     res.json({
@@ -903,12 +931,12 @@ router.get('/cliente/:cliente_id', authenticateToken, async (req, res) => {
           apellido: cliente.apellido,
           estado: cliente.estado
         },
-        solicitudes: solicitudes,
+        solicitudes: solicitudesEstandarizadas,
         resumen: {
-          total: solicitudes.length,
-          pendientes: solicitudes.filter(s => s.estado === 'PENDIENTE').length,
-          aprobadas: solicitudes.filter(s => s.estado === 'APROBADO').length,
-          rechazadas: solicitudes.filter(s => s.estado === 'RECHAZADO').length
+          total: solicitudesEstandarizadas.length,
+          pendientes: solicitudesEstandarizadas.filter(s => s.estado === 'PENDIENTE').length,
+          aprobadas: solicitudesEstandarizadas.filter(s => s.estado === 'APROBADO').length,
+          rechazadas: solicitudesEstandarizadas.filter(s => s.estado === 'RECHAZADO').length
         }
       }
     });

@@ -1,8 +1,15 @@
 const express = require('express');
 const router = express.Router();
-const { Cliente, Prestamo, Solicitud } = require('../models');
+const { Cliente, Prestamo, Solicitud, SolicitudDocumento } = require('../models');
 const { Op } = require('sequelize');
 const { sendCsv } = require('../utils/exporter');
+const { authenticateToken } = require('../middleware/auth');
+
+const construirUrlDocumento = (req, rutaRelativa = '') => {
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  const rutaNormalizada = String(rutaRelativa || '').replace(/\\/g, '/').replace(/^\/+/, '');
+  return `${baseUrl}/${rutaNormalizada}`;
+};
 
 // GET /api/clientes - Listar clientes con paginación
 router.get('/', async (req, res) => {
@@ -126,6 +133,61 @@ router.get('/:id', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error obteniendo cliente'
+    });
+  }
+});
+
+// GET /api/clientes/:clienteId/documentos - Documentos PDF del cliente
+router.get('/:clienteId/documentos', authenticateToken, async (req, res) => {
+  try {
+    const { clienteId } = req.params;
+
+    const cliente = await Cliente.findByPk(clienteId);
+    if (!cliente) {
+      return res.status(404).json({
+        success: false,
+        message: 'Cliente no existe'
+      });
+    }
+
+    const solicitudes = await Solicitud.findAll({
+      where: { cliente_id: clienteId },
+      attributes: ['id', 'cliente_id'],
+      include: [
+        {
+          model: SolicitudDocumento,
+          as: 'documentos',
+          attributes: ['id', 'nombre_original', 'mime_type', 'ruta', 'size_bytes', 'creado_en']
+        }
+      ],
+      order: [['creado_en', 'DESC']]
+    });
+
+    const documentos = solicitudes.flatMap((solicitud) => {
+      const docs = Array.isArray(solicitud.documentos) ? solicitud.documentos : [];
+      return docs.map((doc) => ({
+        id: doc.id,
+        cliente_id: solicitud.cliente_id,
+        solicitud_id: solicitud.id,
+        nombre: doc.nombre_original,
+        tipo: 'PDF',
+        mime_type: doc.mime_type,
+        url: construirUrlDocumento(req, doc.ruta),
+        download_url: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}/download`,
+        size_bytes: doc.size_bytes,
+        fecha_subida: doc.creado_en
+      }));
+    });
+
+    return res.json({
+      success: true,
+      data: documentos
+    });
+  } catch (error) {
+    console.error('Error obteniendo documentos del cliente:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error obteniendo documentos del cliente'
     });
   }
 });
