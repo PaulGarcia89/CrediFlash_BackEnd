@@ -54,10 +54,17 @@ const upload = multer({
 const uploadSolicitudDocumentos = (req, res, next) => {
   upload.array('documentos', 3)(req, res, (err) => {
     if (err) {
+      const esErrorTipo = String(err.message || '').toLowerCase().includes('pdf');
+      const esErrorCantidad = String(err.message || '').toLowerCase().includes('unexpected');
+
       return res.status(400).json({
         success: false,
-        message: 'Error al cargar documento',
-        error: err.message
+        message: esErrorTipo
+          ? 'Tipo de archivo inválido'
+          : esErrorCantidad
+            ? 'Solo se permiten 0, 1, 2 o 3 documentos PDF'
+            : 'Error al cargar documento',
+        error: process.env.NODE_ENV === 'development' ? err.message : undefined
       });
     }
     return next();
@@ -69,6 +76,19 @@ const construirUrlDocumento = (req, rutaRelativa = '') => {
   const rutaNormalizada = String(rutaRelativa || '').replace(/\\/g, '/').replace(/^\/+/, '');
   return `${baseUrl}/${rutaNormalizada}`;
 };
+
+const formatearDocumento = (req, doc, solicitudId = null, clienteId = null) => ({
+  id: doc.id,
+  solicitud_id: solicitudId,
+  cliente_id: clienteId,
+  nombre: doc.nombre_original,
+  mime_type: doc.mime_type,
+  size_bytes: doc.size_bytes,
+  storage_path: doc.ruta,
+  url: construirUrlDocumento(req, doc.ruta),
+  download_url: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}/download`,
+  created_at: doc.creado_en
+});
 
 const eliminarArchivos = async (archivos = []) => {
   if (!archivos || archivos.length === 0) return;
@@ -346,7 +366,7 @@ router.post(
       await eliminarArchivos(archivos);
       return res.status(400).json({
         success: false,
-        message: 'Debe cargar 0, 1, 2 o 3 documentos en PDF'
+        message: 'Solo se permiten 0, 1, 2 o 3 documentos PDF'
       });
     }
 
@@ -355,7 +375,7 @@ router.post(
       await eliminarArchivos(archivos);
       return res.status(400).json({
         success: false,
-        message: 'Todos los documentos deben ser PDF'
+        message: 'Tipo de archivo inválido'
       });
     }
 
@@ -432,10 +452,18 @@ router.post(
       return solicitudConCliente;
     });
 
+    const payload = resultado.toJSON();
+    const documentosEstandar = Array.isArray(payload.documentos)
+      ? payload.documentos.map((doc) => formatearDocumento(req, doc, payload.id, payload.cliente_id))
+      : [];
+
     res.status(201).json({
       success: true,
       message: '✅ Solicitud creada exitosamente',
-      data: resultado,
+      data: {
+        ...payload,
+        documentos: documentosEstandar
+      },
       resumen: {
         monto: `$${monto.toFixed(2)}`,
         plazo: `${plazo} semanas`,
@@ -604,6 +632,9 @@ router.get('/:id', authenticateToken, async (req, res) => {
       success: true,
       data: {
         ...solicitud.toJSON(),
+        documentos: (solicitud.documentos || []).map((doc) =>
+          formatearDocumento(req, doc, solicitud.id, solicitud.cliente_id)
+        ),
         prestamo_asociado: prestamoAsociado
       }
     });
@@ -910,15 +941,9 @@ router.get('/cliente/:cliente_id', authenticateToken, async (req, res) => {
       const documentos = Array.isArray(payload.documentos) ? payload.documentos : [];
       return {
         ...payload,
-        documentos: documentos.map((doc) => ({
-          id: doc.id,
-          nombre: doc.nombre_original,
-          mime_type: doc.mime_type,
-          url: construirUrlDocumento(req, doc.ruta),
-          download_url: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}/download`,
-          size_bytes: doc.size_bytes,
-          fecha_subida: doc.creado_en
-        }))
+        documentos: documentos.map((doc) =>
+          formatearDocumento(req, doc, payload.id, payload.cliente_id)
+        )
       };
     });
 

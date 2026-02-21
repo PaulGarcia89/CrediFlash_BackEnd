@@ -7,11 +7,11 @@ const { authenticateToken } = require('../middleware/auth');
 
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
 
-router.get('/:documentoId/download', authenticateToken, async (req, res) => {
+router.get('/:id/download', authenticateToken, async (req, res) => {
   try {
-    const { documentoId } = req.params;
+    const { id } = req.params;
 
-    const documento = await SolicitudDocumento.findByPk(documentoId);
+    const documento = await SolicitudDocumento.findByPk(id);
     if (!documento) {
       return res.status(404).json({
         success: false,
@@ -37,7 +37,7 @@ router.get('/:documentoId/download', authenticateToken, async (req, res) => {
       });
     }
 
-    res.setHeader('Content-Type', documento.mime_type || 'application/pdf');
+    res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="${documento.nombre_original}"`);
     return res.sendFile(rutaAbsoluta);
   } catch (error) {
