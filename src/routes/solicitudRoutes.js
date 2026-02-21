@@ -947,6 +947,14 @@ router.get('/cliente/:cliente_id', authenticateToken, async (req, res) => {
       };
     });
 
+    const documentosCliente = solicitudesEstandarizadas.flatMap((solicitud) =>
+      (Array.isArray(solicitud.documentos) ? solicitud.documentos : []).map((doc) => ({
+        ...doc,
+        solicitud_id: solicitud.id,
+        cliente_id: cliente_id
+      }))
+    );
+
     res.json({
       success: true,
       data: {
@@ -957,11 +965,13 @@ router.get('/cliente/:cliente_id', authenticateToken, async (req, res) => {
           estado: cliente.estado
         },
         solicitudes: solicitudesEstandarizadas,
+        documentos: documentosCliente,
         resumen: {
           total: solicitudesEstandarizadas.length,
           pendientes: solicitudesEstandarizadas.filter(s => s.estado === 'PENDIENTE').length,
           aprobadas: solicitudesEstandarizadas.filter(s => s.estado === 'APROBADO').length,
-          rechazadas: solicitudesEstandarizadas.filter(s => s.estado === 'RECHAZADO').length
+          rechazadas: solicitudesEstandarizadas.filter(s => s.estado === 'RECHAZADO').length,
+          documentos: documentosCliente.length
         }
       }
     });
