@@ -87,6 +87,7 @@ const formatearDocumento = (req, doc, solicitudId = null, clienteId = null) => (
   storage_path: doc.ruta,
   url: construirUrlDocumento(req, doc.ruta),
   download_url: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}/download`,
+  url_descarga: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}/download`,
   delete_url: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}`,
   created_at: doc.creado_en
 });

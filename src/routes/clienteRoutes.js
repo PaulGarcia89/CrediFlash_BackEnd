@@ -174,6 +174,7 @@ router.get('/:clienteId/documentos', authenticateToken, async (req, res) => {
         mime_type: doc.mime_type,
         url: construirUrlDocumento(req, doc.ruta),
         download_url: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}/download`,
+        url_descarga: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}/download`,
         delete_url: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}`,
         size_bytes: doc.size_bytes,
         fecha_subida: doc.creado_en
