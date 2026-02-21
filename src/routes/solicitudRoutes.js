@@ -330,20 +330,23 @@ router.post(
       });
     }
 
-    // Documentos opcionales: 0, 1, 2 o 3 (todos PDF)
-    const documentos = Array.isArray(req.files) ? req.files : [];
+    const archivos = Array.isArray(req.files) ? req.files : [];
+    console.log(
+      'FILES:',
+      archivos.map((f) => ({ field: f.fieldname, name: f.originalname, type: f.mimetype }))
+    );
 
-    if (documentos.length > 3) {
-      await eliminarArchivos(documentos);
+    if (archivos.length > 3) {
+      await eliminarArchivos(archivos);
       return res.status(400).json({
         success: false,
         message: 'Debe cargar 0, 1, 2 o 3 documentos en PDF'
       });
     }
 
-    const invalidPdf = documentos.find((file) => file.mimetype !== 'application/pdf');
-    if (invalidPdf) {
-      await eliminarArchivos(documentos);
+    const noPdf = archivos.find((file) => file.mimetype !== 'application/pdf');
+    if (noPdf) {
+      await eliminarArchivos(archivos);
       return res.status(400).json({
         success: false,
         message: 'Todos los documentos deben ser PDF'
@@ -354,7 +357,7 @@ router.post(
     if (modelo_aprobacion_id) {
       const modeloExiste = await ModeloAprobacion.findByPk(modelo_aprobacion_id);
       if (!modeloExiste) {
-        await eliminarArchivos(documentos);
+        await eliminarArchivos(archivos);
         return res.status(400).json({
           success: false,
           message: 'El modelo de aprobación indicado no existe'
@@ -367,7 +370,7 @@ router.post(
     if (modelo_calificacion !== undefined && modelo_calificacion !== null && `${modelo_calificacion}`.trim() !== '') {
       modeloCalificacionNormalizado = normalizarModeloCalificacion(modelo_calificacion);
       if (!modeloCalificacionNormalizado) {
-        await eliminarArchivos(documentos);
+        await eliminarArchivos(archivos);
         return res.status(400).json({
           success: false,
           message: 'modelo_calificacion inválido. Use CLIENTE_ANTIGUO o CLIENTE_NUEVO'
@@ -391,8 +394,8 @@ router.post(
     const resultado = await sequelize.transaction(async (transaction) => {
       const solicitud = await Solicitud.create(datosSolicitud, { transaction });
 
-      if (documentos.length > 0) {
-        const documentosData = documentos.map((archivo) => ({
+      if (archivos.length > 0) {
+        const documentosData = archivos.map((archivo) => ({
           solicitud_id: solicitud.id,
           nombre_original: archivo.originalname,
           nombre_archivo: archivo.filename,
@@ -432,7 +435,7 @@ router.post(
         plazo: `${plazo} semanas`,
         tasa: `${(tasa * 100).toFixed(2)}% anual`,
         estado: 'PENDIENTE',
-        documentos: documentos.length
+        documentos: archivos.length
       }
     });
 
