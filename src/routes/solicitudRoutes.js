@@ -330,14 +330,23 @@ router.post(
       });
     }
 
-    // Validar documentos PDF (opcional, exactamente 0 o 3)
-    const documentos = req.files || [];
-    if (documentos.length !== 0 && documentos.length !== 3) {
+    // Documentos opcionales: 0, 1, 2 o 3 (todos PDF)
+    const documentos = Array.isArray(req.files) ? req.files : [];
+
+    if (documentos.length > 3) {
       await eliminarArchivos(documentos);
       return res.status(400).json({
         success: false,
-        message: 'Debe cargar 0 o 3 documentos en PDF',
-        details: { recibidos: documentos.length }
+        message: 'Debe cargar 0, 1, 2 o 3 documentos en PDF'
+      });
+    }
+
+    const invalidPdf = documentos.find((file) => file.mimetype !== 'application/pdf');
+    if (invalidPdf) {
+      await eliminarArchivos(documentos);
+      return res.status(400).json({
+        success: false,
+        message: 'Todos los documentos deben ser PDF'
       });
     }
 
