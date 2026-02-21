@@ -6,27 +6,27 @@ const { Op } = require("sequelize");
 
 const SALT_ROUNDS = 10;
 
+const mapAnalistaWithRole = (analista) => {
+  if (!analista) return null;
+  const payload = analista.toJSON ? analista.toJSON() : analista;
+  const accessRole = Array.isArray(payload.roles_acceso) && payload.roles_acceso.length > 0
+    ? payload.roles_acceso[0]
+    : null;
+
+  return {
+    ...payload,
+    access_role: accessRole
+      ? {
+          id: accessRole.id,
+          nombre: accessRole.nombre,
+          prioridad: accessRole.prioridad,
+          estado: accessRole.estado
+        }
+      : null
+  };
+};
+
 class AnalistaController {
-  mapAnalistaWithRole(analista) {
-    if (!analista) return null;
-    const payload = analista.toJSON ? analista.toJSON() : analista;
-    const accessRole = Array.isArray(payload.roles_acceso) && payload.roles_acceso.length > 0
-      ? payload.roles_acceso[0]
-      : null;
-
-    return {
-      ...payload,
-      access_role: accessRole
-        ? {
-            id: accessRole.id,
-            nombre: accessRole.nombre,
-            prioridad: accessRole.prioridad,
-            estado: accessRole.estado
-          }
-        : null
-    };
-  }
-
   // ✅ REGISTRAR NUEVO ANALISTA
   async registrarAnalista(req, res) {
     try {
@@ -202,7 +202,7 @@ class AnalistaController {
         data: {
           token,
           user: {
-            ...this.mapAnalistaWithRole(analistaConAcceso)
+            ...mapAnalistaWithRole(analistaConAcceso)
           },
         },
       });
@@ -241,7 +241,7 @@ class AnalistaController {
       return res.json({
         success: true,
         message: "✅ Perfil obtenido",
-        data: this.mapAnalistaWithRole(analista),
+        data: mapAnalistaWithRole(analista),
       });
     } catch (error) {
       console.error("❌ Error getPerfil:", error);
@@ -350,7 +350,7 @@ class AnalistaController {
       return res.json({
         success: true,
         message: "✅ Lista de analistas",
-        data: rows.map((item) => this.mapAnalistaWithRole(item)),
+        data: rows.map((item) => mapAnalistaWithRole(item)),
         pagination: {
           total: count,
           page: parseInt(page, 10),
@@ -395,7 +395,7 @@ class AnalistaController {
       return res.json({
         success: true,
         message: "✅ Analista encontrado",
-        data: this.mapAnalistaWithRole(analista),
+        data: mapAnalistaWithRole(analista),
       });
     } catch (error) {
       console.error("❌ Error getAnalistaById:", error);
