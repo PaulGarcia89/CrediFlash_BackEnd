@@ -1,5 +1,5 @@
 // src/controllers/analistaController.js
-const { Analista } = require("../models");
+const { Analista, Role } = require("../models");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { Op } = require("sequelize");
@@ -7,6 +7,26 @@ const { Op } = require("sequelize");
 const SALT_ROUNDS = 10;
 
 class AnalistaController {
+  mapAnalistaWithRole(analista) {
+    if (!analista) return null;
+    const payload = analista.toJSON ? analista.toJSON() : analista;
+    const accessRole = Array.isArray(payload.roles_acceso) && payload.roles_acceso.length > 0
+      ? payload.roles_acceso[0]
+      : null;
+
+    return {
+      ...payload,
+      access_role: accessRole
+        ? {
+            id: accessRole.id,
+            nombre: accessRole.nombre,
+            prioridad: accessRole.prioridad,
+            estado: accessRole.estado
+          }
+        : null
+    };
+  }
+
   // ✅ REGISTRAR NUEVO ANALISTA
   async registrarAnalista(req, res) {
     try {
@@ -156,6 +176,18 @@ class AnalistaController {
       }
   
       await analista.update({ ultimo_acceso: new Date(), updated_at: new Date() });
+
+      const analistaConAcceso = await Analista.findByPk(analista.id, {
+        attributes: { exclude: ['password'] },
+        include: [
+          {
+            model: Role,
+            as: 'roles_acceso',
+            attributes: ['id', 'nombre', 'prioridad', 'estado'],
+            through: { attributes: [] }
+          }
+        ]
+      });
   
       const token = jwt.sign(
         { id: analista.id, email: analista.email, rol: analista.rol },
@@ -170,15 +202,7 @@ class AnalistaController {
         data: {
           token,
           user: {
-            id: analista.id,
-            nombre: analista.nombre,
-            apellido: analista.apellido,
-            email: analista.email,
-            rol: analista.rol,
-            telefono: analista.telefono,
-            estado: analista.estado,
-            codigo_analista: analista.codigo_analista,
-            departamento: analista.departamento,
+            ...this.mapAnalistaWithRole(analistaConAcceso)
           },
         },
       });
@@ -197,6 +221,14 @@ class AnalistaController {
     try {
       const analista = await Analista.findByPk(req.user.id, {
         attributes: { exclude: ["password"] },
+        include: [
+          {
+            model: Role,
+            as: 'roles_acceso',
+            attributes: ['id', 'nombre', 'prioridad', 'estado'],
+            through: { attributes: [] }
+          }
+        ]
       });
 
       if (!analista) {
@@ -209,7 +241,7 @@ class AnalistaController {
       return res.json({
         success: true,
         message: "✅ Perfil obtenido",
-        data: analista,
+        data: this.mapAnalistaWithRole(analista),
       });
     } catch (error) {
       console.error("❌ Error getPerfil:", error);
@@ -302,6 +334,14 @@ class AnalistaController {
       const { count, rows } = await Analista.findAndCountAll({
         where,
         attributes: { exclude: ["password"] },
+        include: [
+          {
+            model: Role,
+            as: 'roles_acceso',
+            attributes: ['id', 'nombre', 'prioridad', 'estado'],
+            through: { attributes: [] }
+          }
+        ],
         order: [["fecha_registro", "DESC"]],
         limit: parseInt(limit, 10),
         offset,
@@ -310,7 +350,7 @@ class AnalistaController {
       return res.json({
         success: true,
         message: "✅ Lista de analistas",
-        data: rows,
+        data: rows.map((item) => this.mapAnalistaWithRole(item)),
         pagination: {
           total: count,
           page: parseInt(page, 10),
@@ -335,6 +375,14 @@ class AnalistaController {
 
       const analista = await Analista.findByPk(id, {
         attributes: { exclude: ["password"] },
+        include: [
+          {
+            model: Role,
+            as: 'roles_acceso',
+            attributes: ['id', 'nombre', 'prioridad', 'estado'],
+            through: { attributes: [] }
+          }
+        ]
       });
 
       if (!analista) {
@@ -347,7 +395,7 @@ class AnalistaController {
       return res.json({
         success: true,
         message: "✅ Analista encontrado",
-        data: analista,
+        data: this.mapAnalistaWithRole(analista),
       });
     } catch (error) {
       console.error("❌ Error getAnalistaById:", error);

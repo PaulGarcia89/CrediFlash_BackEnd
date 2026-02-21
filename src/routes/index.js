@@ -12,6 +12,7 @@ const ratingRoutes = require('./ratingRoutes');
 const newClientRoutes = require('./newClientRoutes');
 const modeloAprobacionRoutes = require('./modeloAprobacionRoutes');
 const analyticsRoutes = require('./analyticsRoutes');
+const rolesRoutes = require('./rolesRoutes');
 
 // Rutas principales
 router.use('/analistas', analistaRoutes);
@@ -21,6 +22,7 @@ router.use('/prestamos', prestamoRoutes);
 router.use('/cuotas', cuotaRoutes);
 router.use('/modelos-aprobacion', modeloAprobacionRoutes);
 router.use('/analytics', analyticsRoutes);
+router.use('/roles', rolesRoutes);
 
 // Ruta de salud
 router.get('/health', (req, res) => {
@@ -32,7 +34,6 @@ router.get('/health', (req, res) => {
 });
 
 module.exports = router;
-
 
 
 

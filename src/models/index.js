@@ -1,4 +1,5 @@
 const sequelize = require('../config/database');
+const { ensureAccessControlSeed } = require('../utils/accessControlSeed');
 
 // ========== IMPORTAR TODOS LOS MODELOS ==========
 const Cliente = require('./Cliente');
@@ -8,6 +9,10 @@ const Solicitud = require('./Solicitud');
 const SolicitudDocumento = require('./SolicitudDocumento');
 const Prestamo = require('./Prestamo');
 const Cuota = require('./Cuota');
+const Role = require('./Role');
+const Permiso = require('./Permiso');
+const RolePermiso = require('./RolePermiso');
+const AnalistaRole = require('./AnalistaRole');
 
 // ========== DEFINIR RELACIONES ==========
 
@@ -101,6 +106,50 @@ Cuota.belongsTo(Prestamo, {
   onUpdate: 'CASCADE'
 });
 
+// 6. ROLES Y PERMISOS
+Role.belongsToMany(Permiso, {
+  through: RolePermiso,
+  foreignKey: 'role_id',
+  otherKey: 'permiso_id',
+  as: 'permisos'
+});
+
+Permiso.belongsToMany(Role, {
+  through: RolePermiso,
+  foreignKey: 'permiso_id',
+  otherKey: 'role_id',
+  as: 'roles'
+});
+
+// 7. ASIGNACIÓN DE ROL A ANALISTA
+Analista.belongsToMany(Role, {
+  through: AnalistaRole,
+  foreignKey: 'analista_id',
+  otherKey: 'role_id',
+  as: 'roles_acceso'
+});
+
+Role.belongsToMany(Analista, {
+  through: AnalistaRole,
+  foreignKey: 'role_id',
+  otherKey: 'analista_id',
+  as: 'analistas'
+});
+
+AnalistaRole.belongsTo(Role, {
+  foreignKey: 'role_id',
+  as: 'role',
+  onDelete: 'CASCADE',
+  onUpdate: 'CASCADE'
+});
+
+AnalistaRole.belongsTo(Analista, {
+  foreignKey: 'analista_id',
+  as: 'analista',
+  onDelete: 'CASCADE',
+  onUpdate: 'CASCADE'
+});
+
 // ========== RELACIONES ADICIONALES PARA CONSULTAS ==========
 
 // Cliente puede acceder a préstamos a través de solicitudes
@@ -154,7 +203,11 @@ const models = {
   Solicitud,
   SolicitudDocumento,
   Prestamo,
-  Cuota
+  Cuota,
+  Role,
+  Permiso,
+  RolePermiso,
+  AnalistaRole
 };
 
 // ========== FUNCIONES DE INICIALIZACIÓN ==========
@@ -250,10 +303,13 @@ models.crearDatosIniciales = async () => {
       console.log('✅ Modelo de aprobación creado');
     }
     
+    const accessControlResult = await ensureAccessControlSeed(models);
+
     return {
       analistas: cuentaAnalistas,
       clientes: cuentaClientes,
-      modelos: cuentaModelos
+      modelos: cuentaModelos,
+      accessControl: accessControlResult
     };
   } catch (error) {
     console.error('❌ Error creando datos iniciales:', error);

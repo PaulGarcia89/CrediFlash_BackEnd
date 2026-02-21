@@ -2,6 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const analistaController = require('../controllers/analistaController');
+const roleController = require('../controllers/roleController');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 
 // ========== RUTAS PÚBLICAS ==========
@@ -19,5 +20,17 @@ router.get('/:id', authenticateToken, requireRole('ADMINISTRADOR', 'SUPERVISOR')
 // ========== RUTAS SOLO PARA ADMIN ==========
 router.put('/:id', authenticateToken, requireRole('ADMINISTRADOR'), analistaController.updateAnalista);
 router.delete('/:id', authenticateToken, requireRole('ADMINISTRADOR'), analistaController.deleteAnalista);
+router.put(
+  '/:id/rol-acceso',
+  authenticateToken,
+  requireRole('ADMINISTRADOR'),
+  roleController.assignRoleToAnalista
+);
+router.get(
+  '/:id/permisos-efectivos',
+  authenticateToken,
+  requireRole('ADMINISTRADOR'),
+  roleController.getAnalistaPermissions
+);
 
 module.exports = router;
