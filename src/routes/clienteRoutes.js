@@ -11,6 +11,16 @@ const construirUrlDocumento = (req, rutaRelativa = '') => {
   return `${baseUrl}/${rutaNormalizada}`;
 };
 
+const deduplicarDocumentosPorId = (documentos = []) => {
+  const map = new Map();
+  documentos.forEach((doc) => {
+    if (doc?.id && !map.has(doc.id)) {
+      map.set(doc.id, doc);
+    }
+  });
+  return Array.from(map.values());
+};
+
 // GET /api/clientes - Listar clientes con paginación
 router.get('/', async (req, res) => {
   try {
@@ -179,17 +189,20 @@ router.get('/:clienteId/documentos', authenticateToken, async (req, res) => {
         tipo: 'PDF',
         mime_type: doc.mime_type,
         url: construirUrlDocumento(req, doc.ruta),
-        download_url: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}/download`,
-        url_descarga: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}/download`,
+        url_ver: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}/download?disposition=inline`,
+        download_url: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}/download?disposition=attachment`,
+        url_descarga: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}/download?disposition=attachment`,
         delete_url: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}`,
         size_bytes: doc.size_bytes,
         fecha_subida: doc.creado_en
       }));
     });
 
+    const documentosUnicos = deduplicarDocumentosPorId(documentos);
+
     return res.json({
       success: true,
-      data: documentos
+      data: documentosUnicos
     });
   } catch (error) {
     console.error('Error obteniendo documentos del cliente:', error);

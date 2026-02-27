@@ -86,11 +86,22 @@ const formatearDocumento = (req, doc, solicitudId = null, clienteId = null) => (
   size_bytes: doc.size_bytes,
   storage_path: doc.ruta,
   url: construirUrlDocumento(req, doc.ruta),
-  download_url: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}/download`,
-  url_descarga: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}/download`,
+  url_ver: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}/download?disposition=inline`,
+  download_url: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}/download?disposition=attachment`,
+  url_descarga: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}/download?disposition=attachment`,
   delete_url: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}`,
   created_at: doc.creado_en
 });
+
+const deduplicarDocumentosPorId = (documentos = []) => {
+  const map = new Map();
+  documentos.forEach((doc) => {
+    if (doc?.id && !map.has(doc.id)) {
+      map.set(doc.id, doc);
+    }
+  });
+  return Array.from(map.values());
+};
 
 const eliminarArchivos = async (archivos = []) => {
   if (!archivos || archivos.length === 0) return;
@@ -956,6 +967,7 @@ router.get('/cliente/:cliente_id', authenticateToken, async (req, res) => {
         cliente_id: cliente_id
       }))
     );
+    const documentosClienteUnicos = deduplicarDocumentosPorId(documentosCliente);
 
     res.json({
       success: true,
@@ -967,13 +979,13 @@ router.get('/cliente/:cliente_id', authenticateToken, async (req, res) => {
           estado: cliente.estado
         },
         solicitudes: solicitudesEstandarizadas,
-        documentos: documentosCliente,
+        documentos: documentosClienteUnicos,
         resumen: {
           total: solicitudesEstandarizadas.length,
           pendientes: solicitudesEstandarizadas.filter(s => s.estado === 'PENDIENTE').length,
           aprobadas: solicitudesEstandarizadas.filter(s => s.estado === 'APROBADO').length,
           rechazadas: solicitudesEstandarizadas.filter(s => s.estado === 'RECHAZADO').length,
-          documentos: documentosCliente.length
+          documentos: documentosClienteUnicos.length
         }
       }
     });

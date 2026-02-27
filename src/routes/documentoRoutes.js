@@ -10,6 +10,7 @@ const PROJECT_ROOT = path.join(__dirname, '..', '..');
 router.get('/:id/download', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
+    const { disposition = 'inline' } = req.query;
 
     const documento = await SolicitudDocumento.findByPk(id);
     if (!documento) {
@@ -37,8 +38,11 @@ router.get('/:id/download', authenticateToken, async (req, res) => {
       });
     }
 
+    const contentDisposition = disposition === 'attachment' ? 'attachment' : 'inline';
+    const safeFileName = String(documento.nombre_original || 'documento.pdf').replace(/"/g, '');
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="${documento.nombre_original}"`);
+    res.setHeader('Content-Disposition', `${contentDisposition}; filename="${safeFileName}"`);
+    console.log(`📄 Documento ${id} servido (${contentDisposition}) por usuario ${req.user?.id || 'N/A'}`);
     return res.sendFile(rutaAbsoluta);
   } catch (error) {
     console.error('Error descargando documento:', error);
@@ -74,6 +78,7 @@ router.delete(
       }
 
       await documento.destroy();
+      console.log(`🗑️ Documento ${id} eliminado por usuario ${req.user?.id || 'N/A'}`);
 
       return res.json({
         success: true,
