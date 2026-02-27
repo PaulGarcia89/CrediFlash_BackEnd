@@ -27,6 +27,20 @@ const Cliente = sequelize.define('Cliente', {
   telefono_contacto: DataTypes.STRING(20),
   email_contacto: DataTypes.STRING(100),
   direccion_contacto: DataTypes.STRING(255),
+  es_referido: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false
+  },
+  referido_por: {
+    type: DataTypes.STRING(150),
+    allowNull: true
+  },
+  porcentaje_referido: {
+    type: DataTypes.DECIMAL(5, 2),
+    allowNull: true,
+    defaultValue: 0
+  },
   estado: {
     type: DataTypes.ENUM('ACTIVO', 'INACTIVO'),
     defaultValue: 'ACTIVO'

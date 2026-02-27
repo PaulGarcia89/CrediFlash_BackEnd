@@ -69,6 +69,9 @@ router.get('/', async (req, res) => {
       telefono_contacto: cliente.telefono_contacto,
       email_contacto: cliente.email_contacto,
       direccion_contacto: cliente.direccion_contacto,
+      es_referido: cliente.es_referido,
+      referido_por: cliente.referido_por,
+      porcentaje_referido: cliente.porcentaje_referido,
       estado: cliente.estado,
       observaciones: cliente.observaciones
     }));
@@ -85,6 +88,9 @@ router.get('/', async (req, res) => {
           { key: 'telefono', label: 'telefono' },
           { key: 'email', label: 'email' },
           { key: 'direccion', label: 'direccion' },
+          { key: 'es_referido', label: 'es_referido' },
+          { key: 'referido_por', label: 'referido_por' },
+          { key: 'porcentaje_referido', label: 'porcentaje_referido' },
           { key: 'estado', label: 'estado' },
           { key: 'observaciones', label: 'observaciones' }
         ],
@@ -261,6 +267,9 @@ router.post('/', async (req, res) => {
       telefono_contacto,
       email_contacto,
       direccion_contacto,
+      es_referido,
+      referido_por,
+      porcentaje_referido,
       estado,
       observaciones 
     } = req.body;
@@ -270,6 +279,18 @@ router.post('/', async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'Nombre y apellido son requeridos'
+      });
+    }
+
+    const referidoFlag = es_referido === true || es_referido === 'true' || es_referido === 1 || es_referido === '1';
+    const porcentajeReferidoNumero = porcentaje_referido !== undefined && porcentaje_referido !== null && `${porcentaje_referido}` !== ''
+      ? parseFloat(porcentaje_referido)
+      : 0;
+
+    if (Number.isNaN(porcentajeReferidoNumero) || porcentajeReferidoNumero < 0 || porcentajeReferidoNumero > 100) {
+      return res.status(400).json({
+        success: false,
+        message: 'porcentaje_referido debe estar entre 0 y 100'
       });
     }
 
@@ -284,6 +305,9 @@ router.post('/', async (req, res) => {
       telefono_contacto,
       email_contacto,
       direccion_contacto,
+      es_referido: referidoFlag,
+      referido_por: referido_por || null,
+      porcentaje_referido: porcentajeReferidoNumero,
       estado: estado || 'ACTIVO',
       observaciones,
       fecha_registro: new Date()
@@ -328,7 +352,8 @@ router.put('/:id', async (req, res) => {
     const camposPermitidos = [
       'nombre', 'apellido', 'telefono', 'email', 'direccion',
       'nombre_contacto', 'apellido_contacto', 'telefono_contacto',
-      'email_contacto', 'direccion_contacto', 'estado', 'observaciones'
+      'email_contacto', 'direccion_contacto', 'es_referido',
+      'referido_por', 'porcentaje_referido', 'estado', 'observaciones'
     ];
 
     // Solo actualizar campos permitidos que estén presentes en el body
@@ -337,6 +362,32 @@ router.put('/:id', async (req, res) => {
         updates[campo] = req.body[campo];
       }
     });
+
+    if (updates.porcentaje_referido !== undefined) {
+      const porcentajeReferidoNumero = parseFloat(updates.porcentaje_referido);
+      if (Number.isNaN(porcentajeReferidoNumero) || porcentajeReferidoNumero < 0 || porcentajeReferidoNumero > 100) {
+        return res.status(400).json({
+          success: false,
+          message: 'porcentaje_referido debe estar entre 0 y 100'
+        });
+      }
+      updates.porcentaje_referido = porcentajeReferidoNumero;
+    }
+
+    if (updates.es_referido !== undefined) {
+      updates.es_referido = updates.es_referido === true || updates.es_referido === 'true' || updates.es_referido === 1 || updates.es_referido === '1';
+    }
+
+    if (updates.referido_por !== undefined && (updates.referido_por === '' || updates.referido_por === null)) {
+      updates.referido_por = null;
+    }
+
+    if (updates.es_referido === false) {
+      updates.referido_por = null;
+      if (updates.porcentaje_referido === undefined) {
+        updates.porcentaje_referido = 0;
+      }
+    }
 
     await cliente.update(updates);
 
