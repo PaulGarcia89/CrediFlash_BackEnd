@@ -202,7 +202,8 @@ class AnalistaController {
         data: {
           token,
           user: {
-            ...mapAnalistaWithRole(analistaConAcceso)
+            ...mapAnalistaWithRole(analistaConAcceso),
+            force_password_change: Boolean(analistaConAcceso?.force_password_change)
           },
         },
       });
@@ -289,6 +290,8 @@ class AnalistaController {
         }
 
         updates.password = await bcrypt.hash(String(nueva_password), SALT_ROUNDS);
+        updates.force_password_change = false;
+        updates.password_reset_at = new Date();
       }
 
       await analista.update({ ...updates, updated_at: new Date() });
@@ -441,6 +444,8 @@ class AnalistaController {
           });
         }
         updates.password = await bcrypt.hash(String(password), SALT_ROUNDS);
+        updates.force_password_change = false;
+        updates.password_reset_at = new Date();
       }
 
       await analista.update({ ...updates, updated_at: new Date() });
@@ -456,6 +461,55 @@ class AnalistaController {
       });
     } catch (error) {
       console.error("❌ Error updateAnalista:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Error en el servidor",
+        error: process.env.NODE_ENV === "development" ? error.message : undefined,
+      });
+    }
+  }
+
+  // ✅ RESET PASSWORD POR ADMIN
+  async resetPasswordByAdmin(req, res) {
+    try {
+      const { id } = req.params;
+      const { nueva_password } = req.body;
+
+      if (!nueva_password || String(nueva_password).length < 8) {
+        return res.status(400).json({
+          success: false,
+          message: "La nueva contraseña debe tener al menos 8 caracteres",
+        });
+      }
+
+      const analista = await Analista.findByPk(id);
+      if (!analista) {
+        return res.status(404).json({
+          success: false,
+          message: "Analista no encontrado",
+        });
+      }
+
+      const resetAt = new Date();
+
+      await analista.update({
+        password: await bcrypt.hash(String(nueva_password), SALT_ROUNDS),
+        force_password_change: true,
+        password_reset_at: resetAt,
+        updated_at: resetAt,
+      });
+
+      return res.json({
+        success: true,
+        message: "✅ Contraseña reseteada correctamente",
+        data: {
+          analista_id: analista.id,
+          force_password_change: true,
+          password_reset_at: resetAt.toISOString(),
+        },
+      });
+    } catch (error) {
+      console.error("❌ Error resetPasswordByAdmin:", error);
       return res.status(500).json({
         success: false,
         message: "Error en el servidor",

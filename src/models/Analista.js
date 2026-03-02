@@ -69,6 +69,15 @@ const Analista = sequelize.define(
       type: DataTypes.DATE,
       allowNull: true,
     },
+    force_password_change: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
+    password_reset_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
     codigo_analista: {
       type: DataTypes.STRING(50),
       allowNull: true,

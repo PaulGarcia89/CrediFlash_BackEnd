@@ -19,6 +19,7 @@ router.get('/:id', authenticateToken, requireRole('ADMINISTRADOR', 'SUPERVISOR')
 
 // ========== RUTAS SOLO PARA ADMIN ==========
 router.put('/:id', authenticateToken, requireRole('ADMINISTRADOR'), analistaController.updateAnalista);
+router.post('/:id/reset-password', authenticateToken, requireRole('ADMINISTRADOR'), analistaController.resetPasswordByAdmin);
 router.delete('/:id', authenticateToken, requireRole('ADMINISTRADOR'), analistaController.deleteAnalista);
 router.put(
   '/:id/rol-acceso',
