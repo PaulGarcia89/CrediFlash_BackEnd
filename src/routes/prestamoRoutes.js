@@ -29,6 +29,57 @@ const calcularMontos = (montoSolicitado, interes, numSemanas) => {
   };
 };
 
+const generarPlanCuotasSemanales = ({ prestamoId, fechaInicio, numSemanas, montoSolicitado, totalPagar }) => {
+  const semanas = parseInt(numSemanas, 10) || 0;
+  if (semanas <= 0) return [];
+
+  const principal = parseFloat(montoSolicitado) || 0;
+  const total = parseFloat(totalPagar) || 0;
+  const interesTotal = parseFloat((total - principal).toFixed(2));
+
+  const montoCuotaBase = parseFloat((total / semanas).toFixed(2));
+  const capitalCuotaBase = parseFloat((principal / semanas).toFixed(2));
+  const interesCuotaBase = parseFloat((interesTotal / semanas).toFixed(2));
+
+  let acumuladoMonto = 0;
+  let acumuladoCapital = 0;
+  let acumuladoInteres = 0;
+  const cuotas = [];
+
+  for (let index = 1; index <= semanas; index += 1) {
+    const fechaVencimiento = new Date(fechaInicio);
+    fechaVencimiento.setDate(fechaVencimiento.getDate() + (index * 7));
+
+    const esUltima = index === semanas;
+    const montoTotalCuota = esUltima
+      ? parseFloat((total - acumuladoMonto).toFixed(2))
+      : montoCuotaBase;
+    const montoCapitalCuota = esUltima
+      ? parseFloat((principal - acumuladoCapital).toFixed(2))
+      : capitalCuotaBase;
+    const montoInteresCuota = esUltima
+      ? parseFloat((interesTotal - acumuladoInteres).toFixed(2))
+      : interesCuotaBase;
+
+    acumuladoMonto = parseFloat((acumuladoMonto + montoTotalCuota).toFixed(2));
+    acumuladoCapital = parseFloat((acumuladoCapital + montoCapitalCuota).toFixed(2));
+    acumuladoInteres = parseFloat((acumuladoInteres + montoInteresCuota).toFixed(2));
+
+    cuotas.push({
+      prestamo_id: prestamoId,
+      fecha_vencimiento: fechaVencimiento,
+      monto_capital: montoCapitalCuota,
+      monto_interes: montoInteresCuota,
+      monto_total: montoTotalCuota,
+      estado: 'PENDIENTE',
+      monto_pagado: 0,
+      observaciones: `Cuota ${index} de ${semanas}`
+    });
+  }
+
+  return cuotas;
+};
+
 // GET /api/prestamos - Obtener todos los préstamos (paginado y filtrado)
 router.get('/', async (req, res) => {
   try {
@@ -212,78 +263,115 @@ router.post(
         message: 'num_semanas es requerido'
       });
     }
-    const solicitud = await Solicitud.findByPk(solicitudId, {
-      include: [{ model: Cliente, as: 'cliente' }]
-    });
-
-    if (!solicitud) {
-      return res.status(404).json({
-        success: false,
-        message: 'Solicitud no encontrada'
+    const resultado = await sequelize.transaction(async (transaction) => {
+      const solicitud = await Solicitud.findByPk(solicitudId, {
+        include: [{ model: Cliente, as: 'cliente' }],
+        transaction,
+        lock: transaction.LOCK.UPDATE
       });
-    }
 
-    if (solicitud.estado !== 'PENDIENTE') {
-      return res.status(400).json({
-        success: false,
-        message: 'La solicitud debe estar en estado PENDIENTE'
+      if (!solicitud) {
+        return { status: 404, body: { success: false, message: 'Solicitud no encontrada' } };
+      }
+
+      if (solicitud.estado !== 'PENDIENTE') {
+        return { status: 400, body: { success: false, message: 'La solicitud debe estar en estado PENDIENTE' } };
+      }
+
+      const prestamoExistente = await Prestamo.findOne({
+        where: { solicitud_id: solicitud.id },
+        transaction,
+        lock: transaction.LOCK.UPDATE
       });
-    }
 
-    await solicitud.update({
-      estado: 'APROBADO',
-      analista_id: req.user.id,
-      fecha_aprobacion: new Date()
+      if (prestamoExistente) {
+        return { status: 400, body: { success: false, message: 'La solicitud ya tiene un préstamo asociado' } };
+      }
+
+      const fechaAprobacion = new Date();
+      const fechaInicio = fecha_inicio ? new Date(fecha_inicio) : new Date();
+      const montoSolicitado = parseFloat(solicitud.monto_solicitado) || 0;
+      const tasaInteres = parseFloat(solicitud.tasa_variable || 0) * 100;
+      const semanas = parseInt(num_semanas, 10);
+
+      const { totalPagar, ganancias, pagosSemanales } = calcularMontos(
+        montoSolicitado,
+        tasaInteres,
+        semanas
+      );
+
+      const fechaVencimiento = calcularFechaVencimiento(fechaInicio, semanas);
+
+      await solicitud.update({
+        estado: 'APROBADO',
+        analista_id: req.user.id,
+        fecha_aprobacion: fechaAprobacion
+      }, { transaction });
+
+      const prestamo = await Prestamo.create({
+        solicitud_id: solicitud.id,
+        fecha_inicio: fechaInicio,
+        fecha_aprobacion: fechaAprobacion,
+        mes: fechaInicio.toLocaleString('es-ES', { month: 'long' }),
+        anio: fechaInicio.getFullYear().toString(),
+        nombre_completo: `${solicitud.cliente.nombre} ${solicitud.cliente.apellido}`,
+        monto_solicitado: montoSolicitado,
+        interes: tasaInteres,
+        modalidad,
+        num_semanas: semanas,
+        num_dias: parseInt(num_dias, 10) || 0,
+        fecha_vencimiento: fechaVencimiento,
+        total_pagar: totalPagar,
+        ganancias,
+        pagos_semanales: pagosSemanales,
+        pagos_hechos: 0,
+        pagos_pendientes: totalPagar,
+        pagado: 0,
+        pendiente: totalPagar,
+        status: 'ACTIVO',
+        ganancia_diaria: 0,
+        reserva: 0,
+        refinanciado: 0,
+        perdida: 0,
+        caso_especial: null,
+        oferta: 0,
+        proyeccion_mes: null,
+        anio_vencimiento: null
+      }, { transaction });
+
+      const planCuotas = generarPlanCuotasSemanales({
+        prestamoId: prestamo.id,
+        fechaInicio,
+        numSemanas: semanas,
+        montoSolicitado,
+        totalPagar
+      });
+
+      const cuotasExistentes = await Cuota.count({
+        where: { prestamo_id: prestamo.id },
+        transaction
+      });
+
+      let cuotasGeneradas = 0;
+      if (cuotasExistentes === 0 && planCuotas.length > 0) {
+        await Cuota.bulkCreate(planCuotas, { transaction });
+        cuotasGeneradas = planCuotas.length;
+      }
+
+      return {
+        status: 201,
+        body: {
+          success: true,
+          message: 'Préstamo creado exitosamente',
+          data: {
+            prestamo,
+            cuotas_generadas: cuotasGeneradas
+          }
+        }
+      };
     });
 
-    const fechaInicio = fecha_inicio ? new Date(fecha_inicio) : new Date();
-    const montoSolicitado = parseFloat(solicitud.monto_solicitado) || 0;
-    const tasaInteres = parseFloat(solicitud.tasa_variable) * 100;
-
-    const { totalPagar, ganancias, pagosSemanales } = calcularMontos(
-      montoSolicitado,
-      tasaInteres,
-      num_semanas
-    );
-
-    const fechaVencimiento = calcularFechaVencimiento(fechaInicio, num_semanas);
-
-    const prestamo = await Prestamo.create({
-      solicitud_id: solicitud.id,
-      fecha_inicio: fechaInicio,
-      fecha_aprobacion: new Date(),
-      mes: fechaInicio.toLocaleString('es-ES', { month: 'long' }),
-      anio: fechaInicio.getFullYear().toString(),
-      nombre_completo: `${solicitud.cliente.nombre} ${solicitud.cliente.apellido}`,
-      monto_solicitado: montoSolicitado,
-      interes: tasaInteres,
-      modalidad,
-      num_semanas: parseInt(num_semanas),
-      num_dias: parseInt(num_dias) || 0,
-      fecha_vencimiento: fechaVencimiento,
-      total_pagar: totalPagar,
-      ganancias,
-      pagos_semanales: pagosSemanales,
-      pagos_hechos: 0,
-      pagos_pendientes: totalPagar,
-      pagado: 0,
-      pendiente: totalPagar,
-      status: 'ACTIVO',
-      ganancia_diaria: 0,
-      reserva: 0,
-      refinanciado: 0,
-      perdida: 0,
-      caso_especial: null,
-      oferta: 0,
-      proyeccion_mes: null,
-      anio_vencimiento: null
-    });
-
-    return res.status(201).json({
-      success: true,
-      message: 'Préstamo creado exitosamente',
-      data: prestamo
-    });
+    return res.status(resultado.status).json(resultado.body);
   } catch (error) {
     console.error('Error creando préstamo desde solicitud:', error);
     return res.status(500).json({
