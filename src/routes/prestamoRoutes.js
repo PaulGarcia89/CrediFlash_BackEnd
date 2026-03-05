@@ -255,14 +255,7 @@ router.post(
   async (req, res) => {
   try {
     const { solicitudId } = req.params;
-    const { fecha_inicio, modalidad = 'SEMANAL', num_semanas, num_dias = 0 } = req.body;
-
-    if (!num_semanas) {
-      return res.status(400).json({
-        success: false,
-        message: 'num_semanas es requerido'
-      });
-    }
+    const { fecha_inicio, modalidad = 'SEMANAL', num_dias = 0 } = req.body;
     const resultado = await sequelize.transaction(async (transaction) => {
       const solicitud = await Solicitud.findByPk(solicitudId, {
         include: [{ model: Cliente, as: 'cliente' }],
@@ -292,7 +285,14 @@ router.post(
       const fechaInicio = fecha_inicio ? new Date(fecha_inicio) : new Date();
       const montoSolicitado = parseFloat(solicitud.monto_solicitado) || 0;
       const tasaInteres = parseFloat(solicitud.tasa_variable || 0) * 100;
-      const semanas = parseInt(num_semanas, 10);
+      const semanas = parseInt(solicitud.plazo_semanas, 10);
+
+      if (!Number.isFinite(semanas) || semanas <= 0) {
+        return {
+          status: 400,
+          body: { success: false, message: 'La solicitud no tiene un plazo_semanas válido' }
+        };
+      }
 
       const { totalPagar, ganancias, pagosSemanales } = calcularMontos(
         montoSolicitado,
