@@ -258,13 +258,16 @@ router.post(
     const { fecha_inicio, modalidad = 'SEMANAL', num_dias = 0 } = req.body;
     const resultado = await sequelize.transaction(async (transaction) => {
       const solicitud = await Solicitud.findByPk(solicitudId, {
-        include: [{ model: Cliente, as: 'cliente' }],
-        transaction,
-        lock: transaction.LOCK.UPDATE
+        transaction
       });
 
       if (!solicitud) {
         return { status: 404, body: { success: false, message: 'Solicitud no encontrada' } };
+      }
+
+      const cliente = await Cliente.findByPk(solicitud.cliente_id, { transaction });
+      if (!cliente) {
+        return { status: 404, body: { success: false, message: 'Cliente no encontrado para la solicitud' } };
       }
 
       if (solicitud.estado !== 'PENDIENTE') {
@@ -273,8 +276,7 @@ router.post(
 
       const prestamoExistente = await Prestamo.findOne({
         where: { solicitud_id: solicitud.id },
-        transaction,
-        lock: transaction.LOCK.UPDATE
+        transaction
       });
 
       if (prestamoExistente) {
@@ -314,7 +316,7 @@ router.post(
         fecha_aprobacion: fechaAprobacion,
         mes: fechaInicio.toLocaleString('es-ES', { month: 'long' }),
         anio: fechaInicio.getFullYear().toString(),
-        nombre_completo: `${solicitud.cliente.nombre} ${solicitud.cliente.apellido}`,
+        nombre_completo: `${cliente.nombre} ${cliente.apellido}`,
         monto_solicitado: montoSolicitado,
         interes: tasaInteres,
         modalidad,
