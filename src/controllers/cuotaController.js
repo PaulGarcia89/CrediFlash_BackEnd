@@ -2,6 +2,13 @@
 const { Cuota, Prestamo, Solicitud, Cliente } = require('../models');
 const { Op } = require('sequelize');
 const { sendCsv } = require('../utils/exporter');
+const { sendCuotaReminderEmail } = require('../utils/emailNotificationService');
+
+const mergeObservacion = (prev, extra) => {
+  if (!extra) return prev || null;
+  if (!prev) return extra;
+  return `${prev}\n${extra}`;
+};
 
 const cuotaController = {
   // Obtener todas las cuotas
@@ -381,6 +388,229 @@ const cuotaController = {
         success: false,
         message: 'Error al generar cuotas para el préstamo',
         error: error.message
+      });
+    }
+  },
+
+  // Enviar notificación manual por correo para una cuota específica
+  enviarNotificacionEmailManual: async (req, res) => {
+    try {
+      const { id } = req.params;
+      const cuota = await Cuota.findByPk(id, {
+        include: [
+          {
+            model: Prestamo,
+            as: 'prestamo',
+            include: [
+              {
+                model: Solicitud,
+                as: 'solicitud',
+                include: [{ model: Cliente, as: 'cliente', attributes: ['id', 'nombre', 'apellido', 'email'] }]
+              }
+            ]
+          }
+        ]
+      });
+
+      if (!cuota) {
+        return res.status(404).json({
+          success: false,
+          message: 'Cuota no encontrada'
+        });
+      }
+
+      const cliente = cuota?.prestamo?.solicitud?.cliente;
+      if (!cliente || !cliente.email) {
+        return res.status(400).json({
+          success: false,
+          message: 'El cliente no tiene correo electrónico registrado'
+        });
+      }
+
+      const clienteNombre = `${cliente.nombre || ''} ${cliente.apellido || ''}`.trim() || 'Cliente';
+
+      await sendCuotaReminderEmail({
+        to: cliente.email,
+        clienteNombre,
+        fechaVencimiento: cuota.fecha_vencimiento,
+        montoTotal: cuota.monto_total,
+        cuotaId: cuota.id
+      });
+
+      await cuota.update({
+        ultimo_recordatorio_email_enviado_en: new Date(),
+        observaciones: mergeObservacion(cuota.observaciones, `Notificación manual por correo enviada el ${new Date().toISOString()}`)
+      });
+
+      return res.json({
+        success: true,
+        message: '✅ Notificación enviada por correo',
+        data: {
+          cuota_id: cuota.id,
+          cliente_email: cliente.email
+        }
+      });
+    } catch (error) {
+      console.error('❌ Error en enviarNotificacionEmailManual:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Error al enviar notificación por correo',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  },
+
+  // Enviar notificación manual por correo para la próxima cuota pendiente de un préstamo
+  enviarNotificacionEmailManualPorPrestamo: async (req, res) => {
+    try {
+      const { prestamoId } = req.params;
+      const cuota = await Cuota.findOne({
+        where: {
+          prestamo_id: prestamoId,
+          estado: 'PENDIENTE'
+        },
+        include: [
+          {
+            model: Prestamo,
+            as: 'prestamo',
+            include: [
+              {
+                model: Solicitud,
+                as: 'solicitud',
+                include: [{ model: Cliente, as: 'cliente', attributes: ['id', 'nombre', 'apellido', 'email'] }]
+              }
+            ]
+          }
+        ],
+        order: [['fecha_vencimiento', 'ASC']]
+      });
+
+      if (!cuota) {
+        return res.status(404).json({
+          success: false,
+          message: 'No hay cuotas pendientes para este préstamo'
+        });
+      }
+
+      const cliente = cuota?.prestamo?.solicitud?.cliente;
+      if (!cliente || !cliente.email) {
+        return res.status(400).json({
+          success: false,
+          message: 'El cliente no tiene correo electrónico registrado'
+        });
+      }
+
+      const clienteNombre = `${cliente.nombre || ''} ${cliente.apellido || ''}`.trim() || 'Cliente';
+
+      await sendCuotaReminderEmail({
+        to: cliente.email,
+        clienteNombre,
+        fechaVencimiento: cuota.fecha_vencimiento,
+        montoTotal: cuota.monto_total,
+        cuotaId: cuota.id
+      });
+
+      await cuota.update({
+        ultimo_recordatorio_email_enviado_en: new Date(),
+        observaciones: mergeObservacion(cuota.observaciones, `Notificación manual por correo enviada el ${new Date().toISOString()}`)
+      });
+
+      return res.json({
+        success: true,
+        message: '✅ Notificación enviada por correo',
+        data: {
+          cuota_id: cuota.id,
+          prestamo_id: prestamoId,
+          cliente_email: cliente.email
+        }
+      });
+    } catch (error) {
+      console.error('❌ Error en enviarNotificacionEmailManualPorPrestamo:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Error al enviar notificación por correo',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  },
+
+  // Envío automático: cuotas que vencen dentro de las próximas 24 horas
+  enviarNotificacionesEmailAutomaticas24h: async (req, res) => {
+    try {
+      const ahora = new Date();
+      const objetivo = new Date(ahora);
+      objetivo.setDate(objetivo.getDate() + 1);
+      const fechaObjetivo = objetivo.toISOString().slice(0, 10);
+
+      const cuotas = await Cuota.findAll({
+        where: {
+          estado: 'PENDIENTE',
+          fecha_vencimiento: fechaObjetivo,
+          ultimo_recordatorio_email_enviado_en: { [Op.is]: null }
+        },
+        include: [
+          {
+            model: Prestamo,
+            as: 'prestamo',
+            include: [
+              {
+                model: Solicitud,
+                as: 'solicitud',
+                include: [{ model: Cliente, as: 'cliente', attributes: ['id', 'nombre', 'apellido', 'email'] }]
+              }
+            ]
+          }
+        ],
+        order: [['fecha_vencimiento', 'ASC']]
+      });
+
+      let enviados = 0;
+      const errores = [];
+
+      for (const cuota of cuotas) {
+        try {
+          const cliente = cuota?.prestamo?.solicitud?.cliente;
+          if (!cliente?.email) {
+            errores.push({ cuota_id: cuota.id, error: 'Cliente sin correo electrónico' });
+            continue;
+          }
+
+          const clienteNombre = `${cliente.nombre || ''} ${cliente.apellido || ''}`.trim() || 'Cliente';
+          await sendCuotaReminderEmail({
+            to: cliente.email,
+            clienteNombre,
+            fechaVencimiento: cuota.fecha_vencimiento,
+            montoTotal: cuota.monto_total,
+            cuotaId: cuota.id
+          });
+
+          await cuota.update({
+            ultimo_recordatorio_email_enviado_en: new Date(),
+            observaciones: mergeObservacion(cuota.observaciones, `Notificación automática 24h enviada el ${new Date().toISOString()}`)
+          });
+
+          enviados += 1;
+        } catch (error) {
+          errores.push({ cuota_id: cuota.id, error: error.message });
+        }
+      }
+
+      return res.json({
+        success: true,
+        message: 'Proceso automático de notificaciones ejecutado',
+        resumen: {
+          encontradas: cuotas.length,
+          enviados,
+          errores: errores.length
+        },
+        errores
+      });
+    } catch (error) {
+      console.error('❌ Error en enviarNotificacionesEmailAutomaticas24h:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Error ejecutando notificaciones automáticas',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
   },

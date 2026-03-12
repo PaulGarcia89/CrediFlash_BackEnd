@@ -45,6 +45,10 @@ const Cuota = sequelize.define('Cuota', {
     allowNull: true,
     defaultValue: 0
   },
+  ultimo_recordatorio_email_enviado_en: {
+    type: DataTypes.DATE,
+    allowNull: true
+  },
   observaciones: {
     type: DataTypes.TEXT,
     allowNull: true

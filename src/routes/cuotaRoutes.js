@@ -2,6 +2,28 @@
 const express = require('express');
 const router = express.Router();
 const cuotaController = require('../controllers/cuotaController');
+const { authenticateToken, requireRole } = require('../middleware/auth');
+
+const validateJobToken = (req, res, next) => {
+  const configuredToken = process.env.NOTIFICATIONS_JOB_TOKEN;
+  const receivedToken = req.headers['x-job-token'];
+
+  if (!configuredToken) {
+    return res.status(500).json({
+      success: false,
+      message: 'NOTIFICATIONS_JOB_TOKEN no está configurado'
+    });
+  }
+
+  if (!receivedToken || receivedToken !== configuredToken) {
+    return res.status(401).json({
+      success: false,
+      message: 'Token de job inválido'
+    });
+  }
+
+  return next();
+};
 
 // ========== RUTAS PRINCIPALES ==========
 
@@ -34,6 +56,27 @@ router.post('/prestamo/:prestamoId/generar', cuotaController.generarCuotasParaPr
 router.post('/prestamo/:prestamoId/generar-semanales', cuotaController.generarCuotasSemanalesParaPrestamo);
 // Generar cuotas semanales para todos los préstamos
 router.post('/prestamos/generar-semanales', cuotaController.generarCuotasSemanalesParaTodos);
+
+// Notificación manual por correo para una cuota
+router.post(
+  '/:id/notificar-email',
+  authenticateToken,
+  requireRole('ANALISTA', 'SUPERVISOR', 'ADMINISTRADOR'),
+  cuotaController.enviarNotificacionEmailManual
+);
+router.post(
+  '/prestamo/:prestamoId/notificar-email',
+  authenticateToken,
+  requireRole('ANALISTA', 'SUPERVISOR', 'ADMINISTRADOR'),
+  cuotaController.enviarNotificacionEmailManualPorPrestamo
+);
+
+// Job de notificaciones automáticas 24h (se recomienda invocar por cron)
+router.post(
+  '/jobs/notificar-email-24h',
+  validateJobToken,
+  cuotaController.enviarNotificacionesEmailAutomaticas24h
+);
 
 // Obtener cuotas vencidas
 router.get('/reportes/vencidas', cuotaController.getCuotasVencidas);
