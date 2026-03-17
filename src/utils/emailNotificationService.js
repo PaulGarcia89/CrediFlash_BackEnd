@@ -1,11 +1,11 @@
 const DEFAULT_FROM = process.env.SMTP_FROM || process.env.EMAIL_FROM || 'no-reply@crediflash.local';
 const APP_NAME = process.env.APP_NAME || 'CrediFlash';
 const DEFAULT_BCC = process.env.SMTP_BCC || 'creditflashadmin@gmail.com';
+const { formatMMDDYYYY } = require('./dateFormat');
 
 const buildCuotaReminderTemplate = ({ clienteNombre, fechaVencimiento, montoTotal, cuotaId }) => {
   const subject = `${APP_NAME} - Recordatorio de cuota por vencer`;
-  const fecha = new Date(fechaVencimiento);
-  const fechaTexto = Number.isNaN(fecha.getTime()) ? String(fechaVencimiento) : fecha.toLocaleDateString('es-DO');
+  const fechaTexto = formatMMDDYYYY(fechaVencimiento);
   const montoTexto = Number.isFinite(Number(montoTotal))
     ? Number(montoTotal).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     : String(montoTotal || '0.00');
@@ -51,8 +51,7 @@ const buildCuotaReminderTemplateDetailed = ({
   tasaInteres
 }) => {
   const subject = `${APP_NAME} - Recordatorio de cuota por vencer`;
-  const fecha = new Date(fechaVencimiento);
-  const fechaTexto = Number.isNaN(fecha.getTime()) ? String(fechaVencimiento) : fecha.toLocaleDateString('es-DO');
+  const fechaTexto = formatMMDDYYYY(fechaVencimiento);
 
   const money = value =>
     Number.isFinite(Number(value))
