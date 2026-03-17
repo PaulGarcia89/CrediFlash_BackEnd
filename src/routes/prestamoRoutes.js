@@ -634,12 +634,16 @@ router.post('/:id/pago-semanal', authenticateToken, requirePermission('prestamos
         return { status: 400, body: { success: false, message: 'El préstamo ya está pagado' } };
       }
 
-      const cuota = await Cuota.findOne({
-        where: { prestamo_id: id, estado: 'PENDIENTE' },
+      const cuotasPendientes = await Cuota.findAll({
+        where: {
+          prestamo_id: id,
+          estado: { [Op.ne]: 'PAGADO' }
+        },
         order: [['fecha_vencimiento', 'ASC']],
         transaction
       });
 
+      const cuota = cuotasPendientes[0];
       if (!cuota) {
         return { status: 400, body: { success: false, message: 'No hay cuotas pendientes para este préstamo' } };
       }
@@ -650,6 +654,10 @@ router.post('/:id/pago-semanal', authenticateToken, requirePermission('prestamos
 
       if (!monto_pago || isNaN(montoPagoRecibido)) {
         return { status: 400, body: { success: false, message: 'monto_pago es requerido' } };
+      }
+
+      if (montoPagoRecibido <= 0) {
+        return { status: 400, body: { success: false, message: 'monto_pago debe ser mayor a 0' } };
       }
 
       if (isNaN(montoPenalizacion) || montoPenalizacion < 0) {
@@ -673,61 +681,116 @@ router.post('/:id/pago-semanal', authenticateToken, requirePermission('prestamos
       }
 
       const montoEsperadoConPenalizacion = parseFloat((montoPagoEsperado + montoPenalizacion).toFixed(2));
-
-      if (montoPagoRecibido !== montoEsperadoConPenalizacion) {
-        return {
-          status: 400,
-          body: {
-            success: false,
-            message: 'El monto del pago debe ser igual a pagos_semanales + penalización',
-            expected: montoEsperadoConPenalizacion
-          }
-        };
-      }
-
       const montoCuota = parseFloat(cuota.monto_total) || 0;
-      if (montoCuota !== montoPagoEsperado) {
-        return {
-          status: 400,
-          body: {
-            success: false,
-            message: 'La cuota pendiente no corresponde al pago semanal. Regenera cuotas semanales para este préstamo.',
-            cuota_monto_total: montoCuota,
-            pagos_semanales: montoPagoEsperado
-          }
-        };
-      }
+      const diferencia = parseFloat((montoPagoRecibido - montoEsperadoConPenalizacion).toFixed(2));
+      const cuotasAjustadas = [];
+      const ahora = new Date();
 
-      // Registrar pago completo de la cuota
+      // Cerrar cuota actual siempre (pago recibido + traspaso de diferencia)
       cuota.monto_pagado = parseFloat((montoCuota + montoPenalizacion).toFixed(2));
-      cuota.fecha_pago = new Date();
+      cuota.fecha_pago = ahora;
       cuota.estado = 'PAGADO';
-      if (montoPenalizacion > 0) {
-        const notaPenalizacion = `Penalización aplicada: ${montoPenalizacion.toFixed(2)}`;
-        cuota.observaciones = cuota.observaciones ? `${cuota.observaciones}\n${notaPenalizacion}` : notaPenalizacion;
-      }
+      const notaBasePago = `Aplicación de pago semanal: recibido=${montoPagoRecibido.toFixed(2)}, esperado=${montoEsperadoConPenalizacion.toFixed(2)}, penalización=${montoPenalizacion.toFixed(2)}`;
+      cuota.observaciones = cuota.observaciones
+        ? `${cuota.observaciones}\n${notaBasePago}`
+        : notaBasePago;
       await cuota.save({ transaction });
 
-      const montoPago = montoPagoRecibido;
-      const pagosHechos = (parseInt(prestamo.pagos_hechos) || 0) + 1;
-      const totalSemanas = parseInt(prestamo.num_semanas) || 0;
-      const pagosPendientes = Math.max(totalSemanas - pagosHechos, 0);
+      let tipoAplicacion = 'COMPLETO';
+      let diferenciaAplicada = diferencia;
 
-      const pagadoTotal = (parseFloat(prestamo.pagado) || 0) + montoPago;
-      const pendienteTotal = Math.max((parseFloat(prestamo.pendiente) || 0) - montoCuota, 0);
+      if (diferencia < 0) {
+        // Pago parcial: el faltante se suma a la siguiente cuota pendiente
+        tipoAplicacion = 'PARCIAL';
+        const faltante = Math.abs(diferencia);
+        const siguiente = cuotasPendientes[1];
 
+        if (!siguiente) {
+          return {
+            status: 400,
+            body: {
+              success: false,
+              message: 'No existe una cuota siguiente para trasladar el faltante del pago parcial'
+            }
+          };
+        }
+
+        const nuevoMonto = parseFloat((parseFloat(siguiente.monto_total || 0) + faltante).toFixed(2));
+        siguiente.monto_total = nuevoMonto;
+        siguiente.observaciones = siguiente.observaciones
+          ? `${siguiente.observaciones}\nAjuste PARCIAL desde cuota ${cuota.id}: +${faltante.toFixed(2)}`
+          : `Ajuste PARCIAL desde cuota ${cuota.id}: +${faltante.toFixed(2)}`;
+        await siguiente.save({ transaction });
+
+        cuotasAjustadas.push({
+          cuota_id: siguiente.id,
+          ajuste: parseFloat(faltante.toFixed(2)),
+          nuevo_monto: nuevoMonto
+        });
+      } else if (diferencia > 0) {
+        // Pago adelantado: aplicar excedente en cascada sobre próximas cuotas
+        tipoAplicacion = 'ADELANTADO';
+        let excedente = diferencia;
+
+        for (let i = 1; i < cuotasPendientes.length && excedente > 0; i += 1) {
+          const cuotaDestino = cuotasPendientes[i];
+          const montoTotalDestino = parseFloat(cuotaDestino.monto_total || 0);
+          const montoPagadoDestino = parseFloat(cuotaDestino.monto_pagado || 0);
+          const saldoDestino = parseFloat((montoTotalDestino - montoPagadoDestino).toFixed(2));
+          if (saldoDestino <= 0) continue;
+
+          const aplicado = parseFloat(Math.min(excedente, saldoDestino).toFixed(2));
+          cuotaDestino.monto_pagado = parseFloat((montoPagadoDestino + aplicado).toFixed(2));
+          cuotaDestino.observaciones = cuotaDestino.observaciones
+            ? `${cuotaDestino.observaciones}\nAjuste ADELANTADO desde cuota ${cuota.id}: -${aplicado.toFixed(2)}`
+            : `Ajuste ADELANTADO desde cuota ${cuota.id}: -${aplicado.toFixed(2)}`;
+
+          if (cuotaDestino.monto_pagado >= montoTotalDestino) {
+            cuotaDestino.monto_pagado = montoTotalDestino;
+            cuotaDestino.estado = 'PAGADO';
+            cuotaDestino.fecha_pago = ahora;
+          }
+
+          await cuotaDestino.save({ transaction });
+
+          const nuevoSaldo = parseFloat((parseFloat(cuotaDestino.monto_total || 0) - parseFloat(cuotaDestino.monto_pagado || 0)).toFixed(2));
+          cuotasAjustadas.push({
+            cuota_id: cuotaDestino.id,
+            ajuste: parseFloat((-aplicado).toFixed(2)),
+            nuevo_monto: Math.max(nuevoSaldo, 0)
+          });
+
+          excedente = parseFloat((excedente - aplicado).toFixed(2));
+        }
+
+        if (excedente > 0) {
+          diferenciaAplicada = parseFloat((diferencia - excedente).toFixed(2));
+        }
+      }
+
+      const cuotasTotales = await Cuota.count({
+        where: { prestamo_id: id },
+        transaction
+      });
+      const cuotasPagadas = await Cuota.count({
+        where: { prestamo_id: id, estado: 'PAGADO' },
+        transaction
+      });
+
+      const pagosHechos = cuotasPagadas;
+      const pagosPendientes = Math.max(cuotasTotales - cuotasPagadas, 0);
+      const pagadoTotal = parseFloat(((parseFloat(prestamo.pagado) || 0) + montoPagoRecibido).toFixed(2));
+      const abonoRealDeuda = Math.max(parseFloat((montoPagoRecibido - montoPenalizacion).toFixed(2)), 0);
+      const pendienteTotal = Math.max(parseFloat(((parseFloat(prestamo.pendiente) || 0) - abonoRealDeuda).toFixed(2)), 0);
       const status = pagosPendientes === 0 ? 'PAGADO' : `LE QUEDAN ${pagosPendientes} PAGOS POR PAGAR`;
 
-      await prestamo.update(
-        {
-          pagos_hechos: pagosHechos,
-          pagos_pendientes: pagosPendientes,
-          pagado: pagadoTotal,
-          pendiente: pendienteTotal,
-          status
-        },
-        { transaction }
-      );
+      await prestamo.update({
+        pagos_hechos: pagosHechos,
+        pagos_pendientes: pagosPendientes,
+        pagado: pagadoTotal,
+        pendiente: pendienteTotal,
+        status
+      }, { transaction });
 
       const clienteNombre = prestamo?.solicitud?.cliente
         ? `${prestamo.solicitud.cliente.nombre} ${prestamo.solicitud.cliente.apellido}`
@@ -739,13 +802,18 @@ router.post('/:id/pago-semanal', authenticateToken, requirePermission('prestamos
           success: true,
           message: '✅ Pago de cuota registrado',
           data: {
+            prestamo_id: id,
+            cuota_actual_id: cuota.id,
             cliente: clienteNombre,
             monto_total: parseFloat(prestamo.total_pagar) || 0,
             num_semanas: parseInt(prestamo.num_semanas) || 0,
             cuotas_restantes: pagosPendientes,
             cuota_id: cuota.id,
-            monto_pagado: montoPago,
+            monto_pagado: montoPagoRecibido,
             monto_penalizacion: montoPenalizacion,
+            tipo_aplicacion: tipoAplicacion,
+            diferencia_aplicada: diferenciaAplicada,
+            cuotas_ajustadas: cuotasAjustadas,
             pagos_hechos: pagosHechos,
             pagos_pendientes: pagosPendientes,
             pagado: pagadoTotal,
