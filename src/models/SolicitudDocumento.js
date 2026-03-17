@@ -27,6 +27,11 @@ const SolicitudDocumento = sequelize.define('SolicitudDocumento', {
     type: DataTypes.INTEGER,
     allowNull: false
   },
+  tipo_documento: {
+    type: DataTypes.STRING(30),
+    allowNull: true,
+    defaultValue: 'ESTADO_CUENTA'
+  },
   ruta: {
     type: DataTypes.STRING(500),
     allowNull: false

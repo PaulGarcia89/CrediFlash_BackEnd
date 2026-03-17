@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
-const { Cliente, Prestamo, Solicitud, SolicitudDocumento, ClienteEmailVerificacion } = require('../models');
+const { Cliente, Prestamo, Solicitud, SolicitudDocumento, ClienteEmailVerificacion, sequelize } = require('../models');
 const { Op } = require('sequelize');
 const { sendCsv } = require('../utils/exporter');
 const { authenticateToken } = require('../middleware/auth');
@@ -42,6 +42,24 @@ const deduplicarDocumentosPorId = (documentos = []) => {
     }
   });
   return Array.from(map.values());
+};
+
+let tipoDocumentoColumnChecked = false;
+let tipoDocumentoColumnAvailable = false;
+
+const ensureSolicitudDocumentoTipoColumn = async () => {
+  if (tipoDocumentoColumnChecked) {
+    return tipoDocumentoColumnAvailable;
+  }
+
+  await sequelize.query(`
+    ALTER TABLE public.solicitud_documentos
+    ADD COLUMN IF NOT EXISTS tipo_documento character varying(30)
+  `);
+
+  tipoDocumentoColumnChecked = true;
+  tipoDocumentoColumnAvailable = true;
+  return true;
 };
 
 // GET /api/clientes - Listar clientes con paginación
@@ -354,6 +372,7 @@ router.get('/:id', async (req, res) => {
 // GET /api/clientes/:clienteId/documentos - Documentos PDF del cliente
 router.get('/:clienteId/documentos', authenticateToken, async (req, res) => {
   try {
+    await ensureSolicitudDocumentoTipoColumn();
     const { clienteId } = req.params;
 
     const cliente = await Cliente.findByPk(clienteId);
@@ -371,7 +390,7 @@ router.get('/:clienteId/documentos', authenticateToken, async (req, res) => {
         {
           model: SolicitudDocumento,
           as: 'documentos',
-          attributes: ['id', 'nombre_original', 'mime_type', 'ruta', 'size_bytes', 'creado_en']
+          attributes: ['id', 'nombre_original', 'mime_type', 'tipo_documento', 'ruta', 'size_bytes', 'creado_en']
         }
       ],
       order: [['creado_en', 'DESC']]
@@ -385,6 +404,8 @@ router.get('/:clienteId/documentos', authenticateToken, async (req, res) => {
         solicitud_id: solicitud.id,
         nombre: doc.nombre_original,
         tipo: 'PDF',
+        categoria: doc.tipo_documento || null,
+        tipo_documento: doc.tipo_documento || null,
         mime_type: doc.mime_type,
         url: construirUrlDocumento(req, doc.ruta),
         url_ver: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}/download?disposition=inline`,

@@ -6,7 +6,7 @@ const router = express.Router();
 const { Solicitud, SolicitudDocumento, Cliente, Analista, ModeloAprobacion, Prestamo, Cuota, sequelize } = require('../models');
 const { Op } = require('sequelize');
 const { sendCsv } = require('../utils/exporter');
-const { calcularTasaEfectivaPorModalidad, normalizarModalidad } = require('../utils/tasaModalidad');
+const { calcularTasaEfectivaPorModalidad, normalizarModalidad, MODALIDADES_PERMITIDAS } = require('../utils/tasaModalidad');
 
 // Importar middleware desde auth
 const { authenticateToken, requireRole } = require('../middleware/auth');
@@ -53,7 +53,7 @@ const upload = multer({
 });
 
 const uploadSolicitudDocumentos = (req, res, next) => {
-  upload.array('documentos', 3)(req, res, (err) => {
+  upload.array('documentos', 4)(req, res, (err) => {
     if (err) {
       const esErrorTipo = String(err.message || '').toLowerCase().includes('pdf');
       const esErrorCantidad = String(err.message || '').toLowerCase().includes('unexpected');
@@ -63,7 +63,7 @@ const uploadSolicitudDocumentos = (req, res, next) => {
         message: esErrorTipo
           ? 'Tipo de archivo inválido'
           : esErrorCantidad
-            ? 'Solo se permiten 0, 1, 2 o 3 documentos PDF'
+            ? 'Solo se permiten 0, 1, 2, 3 o 4 documentos PDF'
             : 'Error al cargar documento',
         error: process.env.NODE_ENV === 'development' ? err.message : undefined
       });
@@ -84,6 +84,8 @@ const formatearDocumento = (req, doc, solicitudId = null, clienteId = null) => (
   cliente_id: clienteId,
   nombre: doc.nombre_original,
   mime_type: doc.mime_type,
+  tipo: doc.tipo_documento || null,
+  tipo_documento: doc.tipo_documento || null,
   size_bytes: doc.size_bytes,
   storage_path: doc.ruta,
   url: construirUrlDocumento(req, doc.ruta),
@@ -117,6 +119,100 @@ const normalizarModeloCalificacion = (modeloCalificacion) => {
   const permitidos = ['CLIENTE_ANTIGUO', 'CLIENTE_NUEVO'];
   if (!permitidos.includes(normalizado)) return null;
   return normalizado;
+};
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const normalizarTexto = (value) => String(value || '').trim();
+
+let tipoDocumentoColumnChecked = false;
+let tipoDocumentoColumnAvailable = false;
+
+const ensureSolicitudDocumentoTipoColumn = async () => {
+  if (tipoDocumentoColumnChecked) {
+    return tipoDocumentoColumnAvailable;
+  }
+
+  await sequelize.query(`
+    ALTER TABLE public.solicitud_documentos
+    ADD COLUMN IF NOT EXISTS tipo_documento character varying(30)
+  `);
+
+  tipoDocumentoColumnChecked = true;
+  tipoDocumentoColumnAvailable = true;
+  return true;
+};
+
+const resolverModeloAprobacion = async (modeloAprobacionInput) => {
+  const valor = normalizarTexto(modeloAprobacionInput);
+  if (!valor) {
+    throw new Error('modelo_aprobacion es requerido.');
+  }
+
+  if (UUID_REGEX.test(valor)) {
+    const modeloPorId = await ModeloAprobacion.findByPk(valor);
+    if (!modeloPorId) {
+      throw new Error('modelo_aprobacion inválido. No existe el modelo indicado.');
+    }
+    return modeloPorId;
+  }
+
+  const [modelo] = await ModeloAprobacion.findOrCreate({
+    where: { nombre: valor },
+    defaults: {
+      reglas: {},
+      puntaje_minimo: 0,
+      activo: true,
+      creado_en: new Date()
+    }
+  });
+
+  return modelo;
+};
+
+const validarYClasificarDocumentosSolicitud = (archivos = [], reqBody = {}) => {
+  const tipoDocumentoIdentidad = normalizarTexto(reqBody.tipo_documento_identidad || 'ID').toUpperCase();
+  const tipoDocumentosEstadoCuenta = normalizarTexto(reqBody.tipo_documentos_estado_cuenta || 'ESTADO_CUENTA').toUpperCase();
+
+  if (tipoDocumentoIdentidad !== 'ID') {
+    throw new Error('tipo_documento_identidad inválido. Debe ser ID.');
+  }
+
+  if (tipoDocumentosEstadoCuenta !== 'ESTADO_CUENTA') {
+    throw new Error('tipo_documentos_estado_cuenta inválido. Debe ser ESTADO_CUENTA.');
+  }
+
+  if (archivos.length === 0) {
+    throw new Error('Debe cargar un documento de identidad en PDF.');
+  }
+
+  if (archivos.length < 3) {
+    throw new Error('Debe cargar al menos 2 estados de cuenta en PDF.');
+  }
+
+  if (archivos.length > 4) {
+    throw new Error('Solo se permiten 1 documento de identidad y hasta 3 estados de cuenta en PDF.');
+  }
+
+  const noPdf = archivos.find((file) => file.mimetype !== 'application/pdf');
+  if (noPdf) {
+    throw new Error('Tipo de archivo inválido');
+  }
+
+  const [archivoIdentidad, ...archivosEstadoCuenta] = archivos;
+
+  if (!archivoIdentidad) {
+    throw new Error('Debe cargar un documento de identidad en PDF.');
+  }
+
+  if (archivosEstadoCuenta.length < 2) {
+    throw new Error('Debe cargar al menos 2 estados de cuenta en PDF.');
+  }
+
+  return [
+    { archivo: archivoIdentidad, tipo_documento: 'ID' },
+    ...archivosEstadoCuenta.map((archivo) => ({ archivo, tipo_documento: 'ESTADO_CUENTA' }))
+  ];
 };
 
 const resolverTasas = ({ modalidad, plazoSemanas, tasaVariable, tasaBase }) => {
@@ -312,6 +408,7 @@ router.post(
       tasa_variable, 
       tasa_base,
       modalidad,
+      modelo_aprobacion,
       modelo_aprobacion_id,
       modelo_calificacion,
       destino
@@ -324,6 +421,10 @@ router.post(
     if (!monto_solicitado && monto_solicitado !== 0) errores.push('monto_solicitado es requerido');
     if (!plazo_semanas && plazo_semanas !== 0) errores.push('plazo_semanas es requerido');
     if (!modalidad) errores.push('modalidad es requerida');
+    if (!tasa_variable && tasa_variable !== 0) errores.push('tasa_variable es requerido');
+    if (!modelo_calificacion || `${modelo_calificacion}`.trim() === '') errores.push('modelo_calificacion es requerido.');
+    if (!modelo_aprobacion && !modelo_aprobacion_id) errores.push('modelo_aprobacion es requerido.');
+    if (!destino || `${destino}`.trim() === '') errores.push('destino es requerido');
     
     if (errores.length > 0) {
       await eliminarArchivos(req.files || []);
@@ -336,7 +437,8 @@ router.post(
 
     const monto = parseFloat(monto_solicitado);
     const plazo = parseInt(plazo_semanas);
-    
+    const tasaVariableNum = parseFloat(tasa_variable);
+
     if (isNaN(monto) || monto <= 0) {
       await eliminarArchivos(req.files || []);
       return res.status(400).json({
@@ -353,10 +455,27 @@ router.post(
       });
     }
 
+    if (isNaN(tasaVariableNum) || tasaVariableNum <= 0) {
+      await eliminarArchivos(req.files || []);
+      return res.status(400).json({
+        success: false,
+        message: 'tasa_variable debe ser mayor a 0'
+      });
+    }
+
+    const modalidadNormalizada = normalizarModalidad(modalidad);
+    if (!MODALIDADES_PERMITIDAS.includes(modalidadNormalizada)) {
+      await eliminarArchivos(req.files || []);
+      return res.status(400).json({
+        success: false,
+        message: 'modalidad inválida. Valores permitidos: SEMANAL, QUINCENAL, MENSUAL.'
+      });
+    }
+
     let tasasModalidad;
     try {
       tasasModalidad = resolverTasas({
-        modalidad,
+        modalidad: modalidadNormalizada,
         plazoSemanas: plazo,
         tasaVariable: tasa_variable,
         tasaBase: tasa_base
@@ -393,34 +512,26 @@ router.post(
       archivos.map((f) => ({ field: f.fieldname, name: f.originalname, type: f.mimetype }))
     );
 
-    if (archivos.length > 3) {
+    let documentosClasificados = [];
+    try {
+      documentosClasificados = validarYClasificarDocumentosSolicitud(archivos, req.body);
+    } catch (error) {
       await eliminarArchivos(archivos);
       return res.status(400).json({
         success: false,
-        message: 'Solo se permiten 0, 1, 2 o 3 documentos PDF'
+        message: error.message || 'Documentación inválida'
       });
     }
 
-    const noPdf = archivos.find((file) => file.mimetype !== 'application/pdf');
-    if (noPdf) {
+    let modeloAprobacionSeleccionado = null;
+    try {
+      modeloAprobacionSeleccionado = await resolverModeloAprobacion(modelo_aprobacion || modelo_aprobacion_id);
+    } catch (error) {
       await eliminarArchivos(archivos);
       return res.status(400).json({
         success: false,
-        message: 'Tipo de archivo inválido'
+        message: error.message || 'modelo_aprobacion inválido'
       });
-    }
-
-    let modeloAprobacionId = null;
-    if (modelo_aprobacion_id) {
-      const modeloExiste = await ModeloAprobacion.findByPk(modelo_aprobacion_id);
-      if (!modeloExiste) {
-        await eliminarArchivos(archivos);
-        return res.status(400).json({
-          success: false,
-          message: 'El modelo de aprobación indicado no existe'
-        });
-      }
-      modeloAprobacionId = modeloExiste.id;
     }
 
     let modeloCalificacionNormalizado = null;
@@ -443,23 +554,25 @@ router.post(
       modalidad: tasasModalidad.modalidad,
       tasa_base: tasasModalidad.tasa_base,
       tasa_variable: tasasModalidad.tasa_variable,
-      modelo_aprobacion_id: modeloAprobacionId,
+      modelo_aprobacion_id: modeloAprobacionSeleccionado.id,
       modelo_calificacion: modeloCalificacionNormalizado,
       estado: 'PENDIENTE',
       creado_en: new Date(),
-      destino: destino || null
+      destino: normalizarTexto(destino)
     };
 
     const resultado = await sequelize.transaction(async (transaction) => {
+      await ensureSolicitudDocumentoTipoColumn();
       const solicitud = await Solicitud.create(datosSolicitud, { transaction });
 
-      if (archivos.length > 0) {
-        const documentosData = archivos.map((archivo) => ({
+      if (documentosClasificados.length > 0) {
+        const documentosData = documentosClasificados.map(({ archivo, tipo_documento }) => ({
           solicitud_id: solicitud.id,
           nombre_original: archivo.originalname,
           nombre_archivo: archivo.filename,
           mime_type: archivo.mimetype,
           size_bytes: archivo.size,
+          tipo_documento,
           ruta: path.relative(path.join(__dirname, '..', '..'), archivo.path)
         }));
 
@@ -474,9 +587,14 @@ router.post(
             attributes: ['id', 'nombre', 'apellido', 'telefono', 'email', 'estado']
           },
           {
+            model: ModeloAprobacion,
+            as: 'modelo_aprobacion',
+            attributes: ['id', 'nombre']
+          },
+          {
             model: SolicitudDocumento,
             as: 'documentos',
-            attributes: ['id', 'nombre_original', 'nombre_archivo', 'mime_type', 'size_bytes', 'ruta', 'creado_en']
+            attributes: ['id', 'nombre_original', 'nombre_archivo', 'mime_type', 'size_bytes', 'tipo_documento', 'ruta', 'creado_en']
           }
         ],
         transaction
@@ -492,9 +610,10 @@ router.post(
 
     res.status(201).json({
       success: true,
-      message: '✅ Solicitud creada exitosamente',
+      message: 'Solicitud creada correctamente',
       data: {
         ...payload,
+        modelo_aprobacion: payload?.modelo_aprobacion?.nombre || modeloAprobacionSeleccionado.nombre,
         documentos: documentosEstandar
       },
       resumen: {
@@ -504,7 +623,7 @@ router.post(
         tasa_base: `${(tasasModalidad.tasa_base * 100).toFixed(2)}%`,
         tasa_efectiva: `${(tasasModalidad.tasa_variable * 100).toFixed(2)}%`,
         estado: 'PENDIENTE',
-        documentos: archivos.length
+        documentos: documentosClasificados.length
       }
     });
 
@@ -536,6 +655,7 @@ router.post(
 // GET /api/solicitudes - Listar todas las solicitudes
 router.get('/', authenticateToken, async (req, res) => {
   try {
+    await ensureSolicitudDocumentoTipoColumn();
     const { 
       page = 1, 
       limit = 20, 
@@ -559,9 +679,14 @@ router.get('/', authenticateToken, async (req, res) => {
           attributes: ['id', 'nombre', 'apellido', 'telefono', 'email']
         },
         {
+          model: ModeloAprobacion,
+          as: 'modelo_aprobacion',
+          attributes: ['id', 'nombre']
+        },
+        {
           model: SolicitudDocumento,
           as: 'documentos',
-          attributes: ['id', 'nombre_original', 'nombre_archivo', 'mime_type', 'size_bytes', 'ruta', 'creado_en']
+          attributes: ['id', 'nombre_original', 'nombre_archivo', 'mime_type', 'size_bytes', 'tipo_documento', 'ruta', 'creado_en']
         }
       ],
       order: [['creado_en', 'DESC']]
@@ -581,6 +706,7 @@ router.get('/', authenticateToken, async (req, res) => {
         cliente_nombre: solicitud?.cliente ? `${solicitud.cliente.nombre} ${solicitud.cliente.apellido}` : '',
         analista_id: solicitud.analista_id,
         modelo_aprobacion_id: solicitud.modelo_aprobacion_id,
+        modelo_aprobacion: solicitud?.modelo_aprobacion?.nombre || null,
         modelo_calificacion: solicitud.modelo_calificacion,
         modalidad: solicitud.modalidad || 'SEMANAL',
         monto_solicitado: solicitud.monto_solicitado,
@@ -618,8 +744,12 @@ router.get('/', authenticateToken, async (req, res) => {
       const raw = item.toJSON ? item.toJSON() : item;
       return {
         ...raw,
+        modelo_aprobacion: raw?.modelo_aprobacion?.nombre || null,
         modalidad: raw.modalidad || 'SEMANAL',
-        tasa_base: raw.tasa_base ?? raw.tasa_variable
+        tasa_base: raw.tasa_base ?? raw.tasa_variable,
+        documentos: (raw.documentos || []).map((doc) =>
+          formatearDocumento(req, doc, raw.id, raw.cliente_id)
+        )
       };
     });
 
@@ -646,6 +776,7 @@ router.get('/', authenticateToken, async (req, res) => {
 // GET /api/solicitudes/:id - Obtener solicitud por ID
 router.get('/:id', authenticateToken, async (req, res) => {
   try {
+    await ensureSolicitudDocumentoTipoColumn();
     const solicitud = await Solicitud.findByPk(req.params.id, {
       include: [
         { 
@@ -654,9 +785,14 @@ router.get('/:id', authenticateToken, async (req, res) => {
           attributes: { exclude: ['createdAt', 'updatedAt'] }
         },
         {
+          model: ModeloAprobacion,
+          as: 'modelo_aprobacion',
+          attributes: ['id', 'nombre']
+        },
+        {
           model: SolicitudDocumento,
           as: 'documentos',
-          attributes: ['id', 'nombre_original', 'nombre_archivo', 'mime_type', 'size_bytes', 'ruta', 'creado_en']
+          attributes: ['id', 'nombre_original', 'nombre_archivo', 'mime_type', 'size_bytes', 'tipo_documento', 'ruta', 'creado_en']
         }
       ]
     });
@@ -680,6 +816,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
       success: true,
       data: {
         ...solicitud.toJSON(),
+        modelo_aprobacion: solicitud?.modelo_aprobacion?.nombre || null,
         modalidad: solicitud.modalidad || 'SEMANAL',
         tasa_base: solicitud.tasa_base ?? solicitud.tasa_variable,
         documentos: (solicitud.documentos || []).map((doc) =>
@@ -721,7 +858,6 @@ router.put('/:id', authenticateToken, requireRole('ANALISTA', 'SUPERVISOR', 'ADM
     if (req.body.cliente_id !== undefined) updates.cliente_id = req.body.cliente_id;
     if (req.body.monto_solicitado !== undefined) updates.monto_solicitado = parseFloat(req.body.monto_solicitado);
     if (req.body.plazo_semanas !== undefined) updates.plazo_semanas = parseInt(req.body.plazo_semanas, 10);
-    if (req.body.modelo_aprobacion_id !== undefined) updates.modelo_aprobacion_id = req.body.modelo_aprobacion_id || null;
     if (req.body.modelo_calificacion !== undefined) updates.modelo_calificacion = req.body.modelo_calificacion || null;
     if (req.body.destino !== undefined) updates.destino = req.body.destino || null;
 
@@ -743,6 +879,36 @@ router.put('/:id', authenticateToken, requireRole('ANALISTA', 'SUPERVISOR', 'ADM
     const modalidadFinal = req.body.modalidad !== undefined
       ? normalizarModalidad(req.body.modalidad)
       : (solicitud.modalidad || 'SEMANAL');
+
+    if (!MODALIDADES_PERMITIDAS.includes(modalidadFinal)) {
+      return res.status(400).json({
+        success: false,
+        message: 'modalidad inválida. Valores permitidos: SEMANAL, QUINCENAL, MENSUAL.'
+      });
+    }
+
+    if (updates.modelo_calificacion !== undefined && updates.modelo_calificacion !== null) {
+      const modeloCalificacionNormalizado = normalizarModeloCalificacion(updates.modelo_calificacion);
+      if (!modeloCalificacionNormalizado) {
+        return res.status(400).json({
+          success: false,
+          message: 'modelo_calificacion inválido. Use CLIENTE_ANTIGUO o CLIENTE_NUEVO'
+        });
+      }
+      updates.modelo_calificacion = modeloCalificacionNormalizado;
+    }
+
+    if (req.body.modelo_aprobacion !== undefined || req.body.modelo_aprobacion_id !== undefined) {
+      try {
+        const modeloAprobacion = await resolverModeloAprobacion(req.body.modelo_aprobacion || req.body.modelo_aprobacion_id);
+        updates.modelo_aprobacion_id = modeloAprobacion.id;
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: error.message || 'modelo_aprobacion inválido'
+        });
+      }
+    }
 
     const tasaBaseFinal = req.body.tasa_base !== undefined
       ? req.body.tasa_base
@@ -768,13 +934,24 @@ router.put('/:id', authenticateToken, requireRole('ANALISTA', 'SUPERVISOR', 'ADM
 
     await solicitud.update(updates);
 
+    const solicitudActualizada = await Solicitud.findByPk(solicitud.id, {
+      include: [
+        {
+          model: ModeloAprobacion,
+          as: 'modelo_aprobacion',
+          attributes: ['id', 'nombre']
+        }
+      ]
+    });
+
     return res.json({
       success: true,
       message: '✅ Solicitud actualizada exitosamente',
       data: {
-        ...solicitud.toJSON(),
-        modalidad: solicitud.modalidad || 'SEMANAL',
-        tasa_base: solicitud.tasa_base ?? solicitud.tasa_variable
+        ...solicitudActualizada.toJSON(),
+        modelo_aprobacion: solicitudActualizada?.modelo_aprobacion?.nombre || null,
+        modalidad: solicitudActualizada.modalidad || 'SEMANAL',
+        tasa_base: solicitudActualizada.tasa_base ?? solicitudActualizada.tasa_variable
       }
     });
   } catch (error) {
@@ -1047,6 +1224,7 @@ router.post(
 // GET /api/solicitudes/cliente/:cliente_id - Obtener solicitudes de un cliente
 router.get('/cliente/:cliente_id', authenticateToken, async (req, res) => {
   try {
+    await ensureSolicitudDocumentoTipoColumn();
     const { cliente_id } = req.params;
     
     const cliente = await Cliente.findByPk(cliente_id);
@@ -1066,9 +1244,14 @@ router.get('/cliente/:cliente_id', authenticateToken, async (req, res) => {
           attributes: ['id', 'nombre', 'apellido']
         },
         {
+          model: ModeloAprobacion,
+          as: 'modelo_aprobacion',
+          attributes: ['id', 'nombre']
+        },
+        {
           model: SolicitudDocumento,
           as: 'documentos',
-          attributes: ['id', 'nombre_original', 'mime_type', 'ruta', 'size_bytes', 'creado_en']
+          attributes: ['id', 'nombre_original', 'mime_type', 'tipo_documento', 'ruta', 'size_bytes', 'creado_en']
         }
       ],
       order: [['creado_en', 'DESC']]
@@ -1079,6 +1262,7 @@ router.get('/cliente/:cliente_id', authenticateToken, async (req, res) => {
       const documentos = Array.isArray(payload.documentos) ? payload.documentos : [];
       return {
         ...payload,
+        modelo_aprobacion: payload?.modelo_aprobacion?.nombre || null,
         documentos: documentos.map((doc) =>
           formatearDocumento(req, doc, payload.id, payload.cliente_id)
         )
