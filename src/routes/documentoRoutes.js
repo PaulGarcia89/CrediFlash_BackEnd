@@ -10,7 +10,7 @@ const PROJECT_ROOT = path.join(__dirname, '..', '..');
 const buildDocumentUrl = (req, documentoId, disposition = 'inline') =>
   `${req.protocol}://${req.get('host')}/api/documentos/${documentoId}/download?disposition=${disposition}`;
 
-router.get('/:id/url', authenticateToken, async (req, res) => {
+router.get('/:id/url', async (req, res) => {
   try {
     const { id } = req.params;
     const documento = await SolicitudDocumento.findByPk(id);
@@ -40,7 +40,7 @@ router.get('/:id/url', authenticateToken, async (req, res) => {
   }
 });
 
-router.get('/:id/download', authenticateToken, async (req, res) => {
+router.get('/:id/download', async (req, res) => {
   try {
     const { id } = req.params;
     const { disposition = 'inline' } = req.query;
