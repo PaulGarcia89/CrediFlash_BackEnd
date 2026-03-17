@@ -53,7 +53,7 @@ const upload = multer({
 });
 
 const uploadSolicitudDocumentos = (req, res, next) => {
-  upload.array('documentos', 4)(req, res, (err) => {
+  upload.array('documentos', 3)(req, res, (err) => {
     if (err) {
       const esErrorTipo = String(err.message || '').toLowerCase().includes('pdf');
       const esErrorCantidad = String(err.message || '').toLowerCase().includes('unexpected');
@@ -63,7 +63,7 @@ const uploadSolicitudDocumentos = (req, res, next) => {
         message: esErrorTipo
           ? 'Tipo de archivo inválido'
           : esErrorCantidad
-            ? 'Solo se permiten 0, 1, 2, 3 o 4 documentos PDF'
+            ? 'Solo se permiten 0, 1, 2 o 3 documentos PDF'
             : 'Error al cargar documento',
         error: process.env.NODE_ENV === 'development' ? err.message : undefined
       });
@@ -183,15 +183,15 @@ const validarYClasificarDocumentosSolicitud = (archivos = [], reqBody = {}) => {
   }
 
   if (archivos.length === 0) {
-    throw new Error('Debe cargar un documento de identidad en PDF.');
+    throw new Error('Debe cargar un documento de identidad en PDF');
   }
 
-  if (archivos.length < 3) {
-    throw new Error('Debe cargar al menos 2 estados de cuenta en PDF.');
+  if (archivos.length < 2) {
+    throw new Error('Debe cargar al menos 1 estado de cuenta en PDF');
   }
 
-  if (archivos.length > 4) {
-    throw new Error('Solo se permiten 1 documento de identidad y hasta 3 estados de cuenta en PDF.');
+  if (archivos.length > 3) {
+    throw new Error('Solo se permiten 1 o 2 estados de cuenta en PDF');
   }
 
   const noPdf = archivos.find((file) => file.mimetype !== 'application/pdf');
@@ -202,11 +202,15 @@ const validarYClasificarDocumentosSolicitud = (archivos = [], reqBody = {}) => {
   const [archivoIdentidad, ...archivosEstadoCuenta] = archivos;
 
   if (!archivoIdentidad) {
-    throw new Error('Debe cargar un documento de identidad en PDF.');
+    throw new Error('Debe cargar un documento de identidad en PDF');
   }
 
-  if (archivosEstadoCuenta.length < 2) {
-    throw new Error('Debe cargar al menos 2 estados de cuenta en PDF.');
+  if (archivosEstadoCuenta.length < 1) {
+    throw new Error('Debe cargar al menos 1 estado de cuenta en PDF');
+  }
+
+  if (archivosEstadoCuenta.length > 2) {
+    throw new Error('Solo se permiten 1 o 2 estados de cuenta en PDF');
   }
 
   return [
