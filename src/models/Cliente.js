@@ -36,8 +36,8 @@ const Cliente = sequelize.define('Cliente', {
     type: DataTypes.STRING(150),
     allowNull: true
   },
-  porcentaje_referido: {
-    type: DataTypes.DECIMAL(5, 2),
+  monto_referido: {
+    type: DataTypes.DECIMAL(15, 2),
     allowNull: true,
     defaultValue: 0
   },

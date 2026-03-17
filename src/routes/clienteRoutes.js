@@ -81,7 +81,7 @@ router.get('/', async (req, res) => {
       direccion_contacto: cliente.direccion_contacto,
       es_referido: cliente.es_referido,
       referido_por: cliente.referido_por,
-      porcentaje_referido: cliente.porcentaje_referido,
+      monto_referido: cliente.monto_referido,
       estado: cliente.estado,
       observaciones: cliente.observaciones
     }));
@@ -100,7 +100,7 @@ router.get('/', async (req, res) => {
           { key: 'direccion', label: 'direccion' },
           { key: 'es_referido', label: 'es_referido' },
           { key: 'referido_por', label: 'referido_por' },
-          { key: 'porcentaje_referido', label: 'porcentaje_referido' },
+          { key: 'monto_referido', label: 'monto_referido' },
           { key: 'estado', label: 'estado' },
           { key: 'observaciones', label: 'observaciones' }
         ],
@@ -282,7 +282,7 @@ router.post('/', async (req, res) => {
       direccion_contacto,
       es_referido,
       referido_por,
-      porcentaje_referido,
+      monto_referido,
       estado,
       observaciones 
     } = req.body;
@@ -296,14 +296,14 @@ router.post('/', async (req, res) => {
     }
 
     const referidoFlag = es_referido === true || es_referido === 'true' || es_referido === 1 || es_referido === '1';
-    const porcentajeReferidoNumero = porcentaje_referido !== undefined && porcentaje_referido !== null && `${porcentaje_referido}` !== ''
-      ? parseFloat(porcentaje_referido)
+    const montoReferidoNumero = monto_referido !== undefined && monto_referido !== null && `${monto_referido}` !== ''
+      ? parseFloat(monto_referido)
       : 0;
 
-    if (Number.isNaN(porcentajeReferidoNumero) || porcentajeReferidoNumero < 0 || porcentajeReferidoNumero > 100) {
+    if (Number.isNaN(montoReferidoNumero) || montoReferidoNumero < 0) {
       return res.status(400).json({
         success: false,
-        message: 'porcentaje_referido debe estar entre 0 y 100'
+        message: 'monto_referido debe ser un número mayor o igual a 0'
       });
     }
 
@@ -320,7 +320,7 @@ router.post('/', async (req, res) => {
       direccion_contacto,
       es_referido: referidoFlag,
       referido_por: referido_por || null,
-      porcentaje_referido: porcentajeReferidoNumero,
+      monto_referido: parseFloat(montoReferidoNumero.toFixed(2)),
       estado: estado || 'ACTIVO',
       observaciones,
       fecha_registro: new Date()
@@ -366,7 +366,7 @@ router.put('/:id', async (req, res) => {
       'nombre', 'apellido', 'telefono', 'email', 'direccion',
       'nombre_contacto', 'apellido_contacto', 'telefono_contacto',
       'email_contacto', 'direccion_contacto', 'es_referido',
-      'referido_por', 'porcentaje_referido', 'estado', 'observaciones'
+      'referido_por', 'monto_referido', 'estado', 'observaciones'
     ];
 
     // Solo actualizar campos permitidos que estén presentes en el body
@@ -376,15 +376,15 @@ router.put('/:id', async (req, res) => {
       }
     });
 
-    if (updates.porcentaje_referido !== undefined) {
-      const porcentajeReferidoNumero = parseFloat(updates.porcentaje_referido);
-      if (Number.isNaN(porcentajeReferidoNumero) || porcentajeReferidoNumero < 0 || porcentajeReferidoNumero > 100) {
+    if (updates.monto_referido !== undefined) {
+      const montoReferidoNumero = parseFloat(updates.monto_referido);
+      if (Number.isNaN(montoReferidoNumero) || montoReferidoNumero < 0) {
         return res.status(400).json({
           success: false,
-          message: 'porcentaje_referido debe estar entre 0 y 100'
+          message: 'monto_referido debe ser un número mayor o igual a 0'
         });
       }
-      updates.porcentaje_referido = porcentajeReferidoNumero;
+      updates.monto_referido = parseFloat(montoReferidoNumero.toFixed(2));
     }
 
     if (updates.es_referido !== undefined) {
@@ -397,8 +397,8 @@ router.put('/:id', async (req, res) => {
 
     if (updates.es_referido === false) {
       updates.referido_por = null;
-      if (updates.porcentaje_referido === undefined) {
-        updates.porcentaje_referido = 0;
+      if (updates.monto_referido === undefined) {
+        updates.monto_referido = 0;
       }
     }
 
