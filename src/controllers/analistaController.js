@@ -202,8 +202,7 @@ class AnalistaController {
         data: {
           token,
           user: {
-            ...mapAnalistaWithRole(analistaConAcceso),
-            force_password_change: Boolean(analistaConAcceso?.force_password_change)
+            ...mapAnalistaWithRole(analistaConAcceso)
           },
         },
       });
@@ -494,7 +493,7 @@ class AnalistaController {
 
       await analista.update({
         password: await bcrypt.hash(String(nueva_password), SALT_ROUNDS),
-        force_password_change: true,
+        force_password_change: false,
         password_reset_at: resetAt,
         updated_at: resetAt,
       });
@@ -504,7 +503,7 @@ class AnalistaController {
         message: "✅ Contraseña reseteada correctamente",
         data: {
           analista_id: analista.id,
-          force_password_change: true,
+          force_password_change: false,
           password_reset_at: resetAt.toISOString(),
         },
       });
