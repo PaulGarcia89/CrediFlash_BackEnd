@@ -1,6 +1,9 @@
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
+const multer = require('multer');
 const router = express.Router();
-const { Prestamo, Solicitud, Cliente, Cuota, sequelize } = require('../models');
+const { Prestamo, Solicitud, Cliente, Cuota, SolicitudDocumento, sequelize } = require('../models');
 const { Op } = require('sequelize');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 const { sendCsv } = require('../utils/exporter');
@@ -80,9 +83,141 @@ const generarPlanCuotasSemanales = ({ prestamoId, fechaInicio, numSemanas, monto
   return cuotas;
 };
 
+const DOCUMENT_UPLOAD_DIR = path.join(__dirname, '..', '..', 'uploads', 'solicitudes');
+
+const asegurarDirectorio = (dir) => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+};
+
+asegurarDirectorio(DOCUMENT_UPLOAD_DIR);
+
+const contratoStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    cb(null, DOCUMENT_UPLOAD_DIR);
+  },
+  filename: (_req, file, cb) => {
+    const timestamp = Date.now();
+    const random = Math.round(Math.random() * 1e9);
+    const ext = path.extname(file.originalname || '').toLowerCase() || '.pdf';
+    const baseName = path
+      .basename(file.originalname || 'contrato_credito', ext)
+      .replace(/[^a-zA-Z0-9_-]/g, '_')
+      .slice(0, 50);
+    cb(null, `${timestamp}-${random}-${baseName}${ext}`);
+  }
+});
+
+const contratoUpload = multer({
+  storage: contratoStorage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const isPdf = file.mimetype === 'application/pdf' || path.extname(file.originalname || '').toLowerCase() === '.pdf';
+    if (!isPdf) return cb(new Error('El contrato debe estar en formato PDF.'), false);
+    return cb(null, true);
+  }
+});
+
+const uploadContratoCredito = (req, res, next) => {
+  contratoUpload.fields([
+    { name: 'contrato_credito', maxCount: 1 },
+    { name: 'documentos', maxCount: 1 }
+  ])(req, res, (err) => {
+    if (err) {
+      const rawMessage = String(err.message || '').toLowerCase();
+      if (rawMessage.includes('file too large')) {
+        return res.status(400).json({
+          success: false,
+          message: 'El contrato supera el tamaño máximo permitido.'
+        });
+      }
+
+      if (rawMessage.includes('pdf')) {
+        return res.status(400).json({
+          success: false,
+          message: 'El contrato debe estar en formato PDF.'
+        });
+      }
+
+      return res.status(400).json({
+        success: false,
+        message: 'Error validando archivo de contrato'
+      });
+    }
+
+    return next();
+  });
+};
+
+const obtenerArchivoContratoDesdeRequest = (req) => {
+  const files = req.files || {};
+  const fromContrato = Array.isArray(files.contrato_credito) ? files.contrato_credito[0] : null;
+  if (fromContrato) return fromContrato;
+  const fromDocumentos = Array.isArray(files.documentos) ? files.documentos[0] : null;
+  return fromDocumentos || null;
+};
+
+const eliminarArchivoSubido = async (archivo) => {
+  if (!archivo?.path) return;
+  await fs.promises.unlink(archivo.path).catch(() => null);
+};
+
+const construirUrlDocumento = (req, documentoId, disposition = 'attachment') =>
+  `${req.protocol}://${req.get('host')}/api/documentos/${documentoId}/download?disposition=${disposition}`;
+
+const construirUrlArchivoRelativo = (req, rutaRelativa = '') => {
+  if (!rutaRelativa) return null;
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  const rutaNormalizada = String(rutaRelativa).replace(/\\/g, '/').replace(/^\/+/, '');
+  return `${baseUrl}/${rutaNormalizada}`;
+};
+
+let solicitudDocumentoSchemaChecked = false;
+let solicitudDocumentoSchemaReady = false;
+
+const ensureSolicitudDocumentoSchema = async () => {
+  if (solicitudDocumentoSchemaChecked) {
+    return solicitudDocumentoSchemaReady;
+  }
+
+  await sequelize.query(`
+    ALTER TABLE public.solicitud_documentos
+    ADD COLUMN IF NOT EXISTS tipo_documento character varying(30)
+  `);
+
+  await sequelize.query(`
+    ALTER TABLE public.solicitud_documentos
+    ADD COLUMN IF NOT EXISTS prestamo_id uuid
+  `);
+
+  solicitudDocumentoSchemaChecked = true;
+  solicitudDocumentoSchemaReady = true;
+  return true;
+};
+
+let prestamoContratoColumnChecked = false;
+let prestamoContratoColumnReady = false;
+
+const ensurePrestamoContratoColumn = async () => {
+  if (prestamoContratoColumnChecked) {
+    return prestamoContratoColumnReady;
+  }
+
+  await sequelize.query(`
+    ALTER TABLE public.prestamos
+    ADD COLUMN IF NOT EXISTS contrato character varying(500)
+  `);
+
+  prestamoContratoColumnChecked = true;
+  prestamoContratoColumnReady = true;
+  return true;
+};
+
 // GET /api/prestamos - Obtener todos los préstamos (paginado y filtrado)
 router.get('/', async (req, res) => {
   try {
+    await ensurePrestamoContratoColumn();
     const {
       page = 1,
       limit = 20,
@@ -143,7 +278,8 @@ router.get('/', async (req, res) => {
 
     const prestamosConClienteId = prestamos.map((prestamo) => ({
       ...prestamo.toJSON(),
-      cliente_id: prestamo?.solicitud?.cliente_id || null
+      cliente_id: prestamo?.solicitud?.cliente_id || null,
+      contrato_url: construirUrlArchivoRelativo(req, prestamo?.contrato)
     }));
 
     if (format === 'csv') {
@@ -161,7 +297,8 @@ router.get('/', async (req, res) => {
         pagos_pendientes: item.pagos_pendientes,
         pendiente: item.pendiente,
         status: item.status,
-        fecha_vencimiento: item.fecha_vencimiento
+        fecha_vencimiento: item.fecha_vencimiento,
+        contrato: item.contrato
       }));
 
       return sendCsv(res, {
@@ -180,7 +317,8 @@ router.get('/', async (req, res) => {
           { key: 'pagos_pendientes', label: 'pagos_pendientes' },
           { key: 'pendiente', label: 'pendiente' },
           { key: 'status', label: 'status' },
-          { key: 'fecha_vencimiento', label: 'fecha_vencimiento' }
+          { key: 'fecha_vencimiento', label: 'fecha_vencimiento' },
+          { key: 'contrato', label: 'contrato' }
         ],
         rows: csvRows
       });
@@ -252,11 +390,41 @@ router.post(
   '/solicitud/:solicitudId',
   authenticateToken,
   requireRole('ANALISTA', 'SUPERVISOR', 'ADMINISTRADOR'),
+  uploadContratoCredito,
   async (req, res) => {
   try {
     const { solicitudId } = req.params;
     const { fecha_inicio, num_dias = 0 } = req.body;
+    const contratoArchivo = obtenerArchivoContratoDesdeRequest(req);
+    const contratoRutaRelativa = path.relative(path.join(__dirname, '..', '..'), contratoArchivo?.path || '');
+
+    if (!contratoArchivo) {
+      return res.status(400).json({
+        success: false,
+        message: 'Debe cargar el contrato de aceptación del crédito en PDF.'
+      });
+    }
+
+    const isPdfContrato = contratoArchivo.mimetype === 'application/pdf' || path.extname(contratoArchivo.originalname || '').toLowerCase() === '.pdf';
+    if (!isPdfContrato) {
+      await eliminarArchivoSubido(contratoArchivo);
+      return res.status(400).json({
+        success: false,
+        message: 'El contrato debe estar en formato PDF.'
+      });
+    }
+
+    if ((contratoArchivo.size || 0) > 10 * 1024 * 1024) {
+      await eliminarArchivoSubido(contratoArchivo);
+      return res.status(400).json({
+        success: false,
+        message: 'El contrato supera el tamaño máximo permitido.'
+      });
+    }
+
     const resultado = await sequelize.transaction(async (transaction) => {
+      await ensureSolicitudDocumentoSchema();
+      await ensurePrestamoContratoColumn();
       const solicitud = await Solicitud.findByPk(solicitudId, {
         transaction
       });
@@ -339,7 +507,8 @@ router.post(
         caso_especial: null,
         oferta: 0,
         proyeccion_mes: null,
-        anio_vencimiento: null
+        anio_vencimiento: null,
+        contrato: contratoRutaRelativa || null
       }, { transaction });
 
       const planCuotas = generarPlanCuotasSemanales({
@@ -361,22 +530,46 @@ router.post(
         cuotasGeneradas = planCuotas.length;
       }
 
+      const contrato = await SolicitudDocumento.create({
+        solicitud_id: solicitud.id,
+        prestamo_id: prestamo.id,
+        nombre_original: contratoArchivo.originalname,
+        nombre_archivo: contratoArchivo.filename,
+        mime_type: contratoArchivo.mimetype || 'application/pdf',
+        size_bytes: contratoArchivo.size || 0,
+        tipo_documento: 'CONTRATO_CREDITO',
+        ruta: path.relative(path.join(__dirname, '..', '..'), contratoArchivo.path)
+      }, { transaction });
+
       return {
         status: 201,
         body: {
           success: true,
-          message: 'Préstamo creado exitosamente',
+          message: '✅ Solicitud aprobada y contrato registrado',
           data: {
             prestamo,
-            cuotas_generadas: cuotasGeneradas
+            cuotas_generadas: cuotasGeneradas,
+            contrato: {
+              id: contrato.id,
+              nombre: contrato.nombre_original,
+              tipo: 'CONTRATO_CREDITO',
+              storage_path: prestamo.contrato,
+              url: construirUrlArchivoRelativo(req, prestamo.contrato),
+              url_descarga: construirUrlDocumento(req, contrato.id, 'attachment')
+            }
           }
         }
       };
     });
 
+    if (resultado.status >= 400) {
+      await eliminarArchivoSubido(contratoArchivo);
+    }
+
     return res.status(resultado.status).json(resultado.body);
   } catch (error) {
     console.error('Error creando préstamo desde solicitud:', error);
+    await eliminarArchivoSubido(obtenerArchivoContratoDesdeRequest(req));
     return res.status(500).json({
       success: false,
       message: 'Error creando préstamo desde solicitud'

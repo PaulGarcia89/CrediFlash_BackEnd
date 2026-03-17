@@ -11,6 +11,10 @@ const SolicitudDocumento = sequelize.define('SolicitudDocumento', {
     type: DataTypes.UUID,
     allowNull: false
   },
+  prestamo_id: {
+    type: DataTypes.UUID,
+    allowNull: true
+  },
   nombre_original: {
     type: DataTypes.STRING(255),
     allowNull: false

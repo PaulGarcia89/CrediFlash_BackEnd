@@ -11,6 +11,10 @@ const Prestamo = sequelize.define('Prestamo', {
     type: DataTypes.UUID,
     allowNull: false
   },
+  contrato: {
+    type: DataTypes.STRING(500),
+    allowNull: true
+  },
   fecha_inicio: {
     type: DataTypes.DATE,
     allowNull: false,
