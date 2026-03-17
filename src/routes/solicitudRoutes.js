@@ -6,6 +6,7 @@ const router = express.Router();
 const { Solicitud, SolicitudDocumento, Cliente, Analista, ModeloAprobacion, Prestamo, Cuota, sequelize } = require('../models');
 const { Op } = require('sequelize');
 const { sendCsv } = require('../utils/exporter');
+const { calcularTasaEfectivaPorModalidad, normalizarModalidad } = require('../utils/tasaModalidad');
 
 // Importar middleware desde auth
 const { authenticateToken, requireRole } = require('../middleware/auth');
@@ -116,6 +117,16 @@ const normalizarModeloCalificacion = (modeloCalificacion) => {
   const permitidos = ['CLIENTE_ANTIGUO', 'CLIENTE_NUEVO'];
   if (!permitidos.includes(normalizado)) return null;
   return normalizado;
+};
+
+const resolverTasas = ({ modalidad, plazoSemanas, tasaVariable, tasaBase }) => {
+  const tasaBaseInput = tasaBase !== undefined && tasaBase !== null && `${tasaBase}` !== '' ? tasaBase : tasaVariable;
+
+  return calcularTasaEfectivaPorModalidad({
+    modalidad,
+    tasaBase: tasaBaseInput,
+    plazoSemanas
+  });
 };
 
 const obtenerModeloAprobacionPorTipo = async (tipo) => {
@@ -262,7 +273,7 @@ async function aprobarSolicitudYCrearPrestamo(solicitudId, analistaId) {
       nombre_completo: `${solicitud.cliente.nombre} ${solicitud.cliente.apellido}`,
       mes: new Date().toLocaleString('es-ES', { month: 'long' }),
       anio: new Date().getFullYear().toString(),
-      modalidad: 'SEMANAL',
+      modalidad: solicitud.modalidad || 'SEMANAL',
       num_semanas: parseInt(solicitud.plazo_semanas),
       fecha_vencimiento: calcularFechaVencimiento(solicitud.plazo_semanas)
     });
@@ -299,6 +310,8 @@ router.post(
       monto_solicitado, 
       plazo_semanas, 
       tasa_variable, 
+      tasa_base,
+      modalidad,
       modelo_aprobacion_id,
       modelo_calificacion,
       destino
@@ -310,6 +323,7 @@ router.post(
     if (!cliente_id) errores.push('cliente_id es requerido');
     if (!monto_solicitado && monto_solicitado !== 0) errores.push('monto_solicitado es requerido');
     if (!plazo_semanas && plazo_semanas !== 0) errores.push('plazo_semanas es requerido');
+    if (!modalidad) errores.push('modalidad es requerida');
     
     if (errores.length > 0) {
       await eliminarArchivos(req.files || []);
@@ -339,16 +353,20 @@ router.post(
       });
     }
 
-    let tasa = 0.12;
-    if (tasa_variable !== undefined && tasa_variable !== null) {
-      tasa = parseFloat(tasa_variable);
-      if (isNaN(tasa) || tasa < 0.01 || tasa > 1.00) {
-        await eliminarArchivos(req.files || []);
-        return res.status(400).json({
-          success: false,
-          message: 'La tasa variable debe estar entre 0.01 y 1.00'
-        });
-      }
+    let tasasModalidad;
+    try {
+      tasasModalidad = resolverTasas({
+        modalidad,
+        plazoSemanas: plazo,
+        tasaVariable: tasa_variable,
+        tasaBase: tasa_base
+      });
+    } catch (error) {
+      await eliminarArchivos(req.files || []);
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'No se pudo calcular la tasa efectiva'
+      });
     }
 
     // Verificar que el cliente existe
@@ -422,7 +440,9 @@ router.post(
       analista_id: req.user.id,
       monto_solicitado: monto,
       plazo_semanas: plazo,
-      tasa_variable: tasa,
+      modalidad: tasasModalidad.modalidad,
+      tasa_base: tasasModalidad.tasa_base,
+      tasa_variable: tasasModalidad.tasa_variable,
       modelo_aprobacion_id: modeloAprobacionId,
       modelo_calificacion: modeloCalificacionNormalizado,
       estado: 'PENDIENTE',
@@ -480,7 +500,9 @@ router.post(
       resumen: {
         monto: `$${monto.toFixed(2)}`,
         plazo: `${plazo} semanas`,
-        tasa: `${(tasa * 100).toFixed(2)}% anual`,
+        modalidad: tasasModalidad.modalidad,
+        tasa_base: `${(tasasModalidad.tasa_base * 100).toFixed(2)}%`,
+        tasa_efectiva: `${(tasasModalidad.tasa_variable * 100).toFixed(2)}%`,
         estado: 'PENDIENTE',
         documentos: archivos.length
       }
@@ -560,8 +582,10 @@ router.get('/', authenticateToken, async (req, res) => {
         analista_id: solicitud.analista_id,
         modelo_aprobacion_id: solicitud.modelo_aprobacion_id,
         modelo_calificacion: solicitud.modelo_calificacion,
+        modalidad: solicitud.modalidad || 'SEMANAL',
         monto_solicitado: solicitud.monto_solicitado,
         plazo_semanas: solicitud.plazo_semanas,
+        tasa_base: solicitud.tasa_base,
         tasa_variable: solicitud.tasa_variable,
         estado: solicitud.estado,
         creado_en: solicitud.creado_en,
@@ -577,8 +601,10 @@ router.get('/', authenticateToken, async (req, res) => {
           { key: 'analista_id', label: 'analista_id' },
           { key: 'modelo_aprobacion_id', label: 'modelo_aprobacion_id' },
           { key: 'modelo_calificacion', label: 'modelo_calificacion' },
+          { key: 'modalidad', label: 'modalidad' },
           { key: 'monto_solicitado', label: 'monto_solicitado' },
           { key: 'plazo_semanas', label: 'plazo_semanas' },
+          { key: 'tasa_base', label: 'tasa_base' },
           { key: 'tasa_variable', label: 'tasa_variable' },
           { key: 'estado', label: 'estado' },
           { key: 'creado_en', label: 'creado_en' },
@@ -588,9 +614,18 @@ router.get('/', authenticateToken, async (req, res) => {
       });
     }
 
+    const solicitudesNormalizadas = solicitudes.map((item) => {
+      const raw = item.toJSON ? item.toJSON() : item;
+      return {
+        ...raw,
+        modalidad: raw.modalidad || 'SEMANAL',
+        tasa_base: raw.tasa_base ?? raw.tasa_variable
+      };
+    });
+
     res.json({
       success: true,
-      data: solicitudes,
+      data: solicitudesNormalizadas,
       pagination: {
         total: count,
         page: parseInt(page),
@@ -645,6 +680,8 @@ router.get('/:id', authenticateToken, async (req, res) => {
       success: true,
       data: {
         ...solicitud.toJSON(),
+        modalidad: solicitud.modalidad || 'SEMANAL',
+        tasa_base: solicitud.tasa_base ?? solicitud.tasa_variable,
         documentos: (solicitud.documentos || []).map((doc) =>
           formatearDocumento(req, doc, solicitud.id, solicitud.cliente_id)
         ),
@@ -657,6 +694,94 @@ router.get('/:id', authenticateToken, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error obteniendo solicitud'
+    });
+  }
+});
+
+// PUT /api/solicitudes/:id - Actualizar solicitud (recalcula tasa por modalidad)
+router.put('/:id', authenticateToken, requireRole('ANALISTA', 'SUPERVISOR', 'ADMINISTRADOR'), async (req, res) => {
+  try {
+    const solicitud = await Solicitud.findByPk(req.params.id);
+    if (!solicitud) {
+      return res.status(404).json({
+        success: false,
+        message: 'Solicitud no encontrada'
+      });
+    }
+
+    if (solicitud.estado !== 'PENDIENTE') {
+      return res.status(400).json({
+        success: false,
+        message: 'Solo se pueden editar solicitudes en estado PENDIENTE'
+      });
+    }
+
+    const updates = {};
+
+    if (req.body.cliente_id !== undefined) updates.cliente_id = req.body.cliente_id;
+    if (req.body.monto_solicitado !== undefined) updates.monto_solicitado = parseFloat(req.body.monto_solicitado);
+    if (req.body.plazo_semanas !== undefined) updates.plazo_semanas = parseInt(req.body.plazo_semanas, 10);
+    if (req.body.modelo_aprobacion_id !== undefined) updates.modelo_aprobacion_id = req.body.modelo_aprobacion_id || null;
+    if (req.body.modelo_calificacion !== undefined) updates.modelo_calificacion = req.body.modelo_calificacion || null;
+    if (req.body.destino !== undefined) updates.destino = req.body.destino || null;
+
+    if (updates.monto_solicitado !== undefined && (!Number.isFinite(updates.monto_solicitado) || updates.monto_solicitado <= 0)) {
+      return res.status(400).json({
+        success: false,
+        message: 'monto_solicitado debe ser mayor a 0'
+      });
+    }
+
+    const plazoFinal = updates.plazo_semanas !== undefined ? updates.plazo_semanas : parseInt(solicitud.plazo_semanas, 10);
+    if (!Number.isFinite(plazoFinal) || plazoFinal <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'plazo_semanas debe ser mayor a 0'
+      });
+    }
+
+    const modalidadFinal = req.body.modalidad !== undefined
+      ? normalizarModalidad(req.body.modalidad)
+      : (solicitud.modalidad || 'SEMANAL');
+
+    const tasaBaseFinal = req.body.tasa_base !== undefined
+      ? req.body.tasa_base
+      : (req.body.tasa_variable !== undefined ? req.body.tasa_variable : (solicitud.tasa_base ?? solicitud.tasa_variable));
+
+    let tasasModalidad;
+    try {
+      tasasModalidad = resolverTasas({
+        modalidad: modalidadFinal,
+        plazoSemanas: plazoFinal,
+        tasaBase: tasaBaseFinal
+      });
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'No se pudo calcular la tasa efectiva'
+      });
+    }
+
+    updates.modalidad = tasasModalidad.modalidad;
+    updates.tasa_base = tasasModalidad.tasa_base;
+    updates.tasa_variable = tasasModalidad.tasa_variable;
+
+    await solicitud.update(updates);
+
+    return res.json({
+      success: true,
+      message: '✅ Solicitud actualizada exitosamente',
+      data: {
+        ...solicitud.toJSON(),
+        modalidad: solicitud.modalidad || 'SEMANAL',
+        tasa_base: solicitud.tasa_base ?? solicitud.tasa_variable
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error actualizando solicitud:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error actualizando solicitud'
     });
   }
 });

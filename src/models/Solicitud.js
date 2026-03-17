@@ -23,6 +23,16 @@ const Solicitud = sequelize.define('Solicitud', {
     type: DataTypes.STRING(20),
     allowNull: true
   },
+  modalidad: {
+    type: DataTypes.STRING(20),
+    allowNull: true,
+    defaultValue: 'SEMANAL'
+  },
+  tasa_base: {
+    type: DataTypes.DECIMAL(10, 4),
+    allowNull: true,
+    defaultValue: 0.12
+  },
   monto_solicitado: {
     type: DataTypes.DECIMAL(15, 2),
     allowNull: false

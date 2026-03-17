@@ -255,7 +255,7 @@ router.post(
   async (req, res) => {
   try {
     const { solicitudId } = req.params;
-    const { fecha_inicio, modalidad = 'SEMANAL', num_dias = 0 } = req.body;
+    const { fecha_inicio, num_dias = 0 } = req.body;
     const resultado = await sequelize.transaction(async (transaction) => {
       const solicitud = await Solicitud.findByPk(solicitudId, {
         transaction
@@ -287,6 +287,7 @@ router.post(
       const fechaInicio = fecha_inicio ? new Date(fecha_inicio) : new Date();
       const montoSolicitado = parseFloat(solicitud.monto_solicitado) || 0;
       const tasaInteres = parseFloat(solicitud.tasa_variable || 0) * 100;
+      const modalidad = solicitud.modalidad || 'SEMANAL';
       const semanas = parseInt(solicitud.plazo_semanas, 10);
 
       if (!Number.isFinite(semanas) || semanas <= 0) {
