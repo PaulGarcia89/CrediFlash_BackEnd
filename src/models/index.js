@@ -4,6 +4,7 @@ const { ensureAccessControlSeed } = require('../utils/accessControlSeed');
 // ========== IMPORTAR TODOS LOS MODELOS ==========
 const Cliente = require('./Cliente');
 const Analista = require('./Analista');
+const ClienteEmailVerificacion = require('./ClienteEmailVerificacion');
 const ModeloAprobacion = require('./ModeloAprobacion');
 const Solicitud = require('./Solicitud');
 const SolicitudDocumento = require('./SolicitudDocumento');
@@ -199,6 +200,7 @@ const models = {
   sequelize,
   Cliente,
   Analista,
+  ClienteEmailVerificacion,
   ModeloAprobacion,
   Solicitud,
   SolicitudDocumento,

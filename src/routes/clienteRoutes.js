@@ -1,9 +1,32 @@
 const express = require('express');
 const router = express.Router();
-const { Cliente, Prestamo, Solicitud, SolicitudDocumento } = require('../models');
+const crypto = require('crypto');
+const { Cliente, Prestamo, Solicitud, SolicitudDocumento, ClienteEmailVerificacion } = require('../models');
 const { Op } = require('sequelize');
 const { sendCsv } = require('../utils/exporter');
 const { authenticateToken } = require('../middleware/auth');
+const { sendOtpVerificationEmail } = require('../utils/emailVerificationService');
+
+const OTP_EXPIRES_SECONDS = 600;
+const OTP_MAX_ATTEMPTS = 5;
+const OTP_MIN_RESEND_SECONDS = 60;
+const OTP_MAX_SENDS_PER_HOUR = 5;
+
+const normalizarEmail = (email) => String(email || '').trim().toLowerCase();
+const validarFormatoEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || '').trim());
+const generarCodigoOtp = () => String(Math.floor(100000 + Math.random() * 900000));
+const buildOtpHash = (email, code) =>
+  crypto.createHash('sha256').update(`${normalizarEmail(email)}|${String(code)}|${process.env.OTP_SECRET || 'crediflash-otp-secret'}`).digest('hex');
+const timingSafeEqual = (left, right) => {
+  try {
+    const a = Buffer.from(String(left || ''), 'utf8');
+    const b = Buffer.from(String(right || ''), 'utf8');
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
+  } catch (_error) {
+    return false;
+  }
+};
 
 const construirUrlDocumento = (req, rutaRelativa = '') => {
   const baseUrl = `${req.protocol}://${req.get('host')}`;
@@ -124,6 +147,181 @@ router.get('/', async (req, res) => {
       success: false,
       message: 'Error obteniendo clientes',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// POST /api/clientes/verificacion-email/enviar - Enviar OTP al correo
+router.post('/verificacion-email/enviar', async (req, res) => {
+  try {
+    const email = normalizarEmail(req.body?.email);
+
+    if (!email || !validarFormatoEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email inválido'
+      });
+    }
+
+    const ahora = new Date();
+    const verificacion = await ClienteEmailVerificacion.findOne({ where: { email } });
+
+    if (verificacion?.last_sent_at) {
+      const secondsFromLastSend = Math.floor((ahora.getTime() - new Date(verificacion.last_sent_at).getTime()) / 1000);
+      if (secondsFromLastSend < OTP_MIN_RESEND_SECONDS) {
+        return res.status(429).json({
+          success: false,
+          message: `Rate limit excedido. Reintenta en ${OTP_MIN_RESEND_SECONDS - secondsFromLastSend} segundos`
+        });
+      }
+    }
+
+    let sendCount = verificacion?.send_count || 0;
+    const lastSentAt = verificacion?.last_sent_at ? new Date(verificacion.last_sent_at) : null;
+    if (!lastSentAt || (ahora.getTime() - lastSentAt.getTime()) > (60 * 60 * 1000)) {
+      sendCount = 0;
+    }
+
+    if (sendCount >= OTP_MAX_SENDS_PER_HOUR) {
+      return res.status(429).json({
+        success: false,
+        message: 'Rate limit excedido. Intenta nuevamente más tarde'
+      });
+    }
+
+    const codigo = generarCodigoOtp();
+    const codigoHash = buildOtpHash(email, codigo);
+    const expiresAt = new Date(ahora.getTime() + OTP_EXPIRES_SECONDS * 1000);
+
+    if (!verificacion) {
+      await ClienteEmailVerificacion.create({
+        email,
+        codigo_hash: codigoHash,
+        expires_at: expiresAt,
+        intentos: 0,
+        max_intentos: OTP_MAX_ATTEMPTS,
+        verified: false,
+        verified_at: null,
+        send_count: 1,
+        last_sent_at: ahora,
+        created_at: ahora,
+        updated_at: ahora
+      });
+    } else {
+      await verificacion.update({
+        codigo_hash: codigoHash,
+        expires_at: expiresAt,
+        intentos: 0,
+        max_intentos: OTP_MAX_ATTEMPTS,
+        verified: false,
+        verified_at: null,
+        send_count: sendCount + 1,
+        last_sent_at: ahora,
+        updated_at: ahora
+      });
+    }
+
+    await sendOtpVerificationEmail({
+      to: email,
+      codigo,
+      expiresInMinutes: Math.floor(OTP_EXPIRES_SECONDS / 60)
+    });
+
+    return res.json({
+      success: true,
+      message: 'Código de verificación enviado.',
+      data: {
+        email,
+        expires_in_seconds: OTP_EXPIRES_SECONDS
+      }
+    });
+  } catch (error) {
+    console.error('Error enviando OTP de verificación de correo:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error enviando código de verificación'
+    });
+  }
+});
+
+// POST /api/clientes/verificacion-email/verificar - Verificar OTP
+router.post('/verificacion-email/verificar', async (req, res) => {
+  try {
+    const email = normalizarEmail(req.body?.email);
+    const codigo = String(req.body?.codigo || '').trim();
+
+    if (!email || !validarFormatoEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email inválido'
+      });
+    }
+
+    if (!codigo || !/^\d{6}$/.test(codigo)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Código inválido'
+      });
+    }
+
+    const verificacion = await ClienteEmailVerificacion.findOne({ where: { email } });
+    if (!verificacion || !verificacion.codigo_hash) {
+      return res.status(400).json({
+        success: false,
+        message: 'Código inválido'
+      });
+    }
+
+    if ((verificacion.intentos || 0) >= (verificacion.max_intentos || OTP_MAX_ATTEMPTS)) {
+      return res.status(429).json({
+        success: false,
+        message: 'Demasiados intentos'
+      });
+    }
+
+    if (!verificacion.expires_at || new Date(verificacion.expires_at).getTime() < Date.now()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Código expirado'
+      });
+    }
+
+    const expectedHash = buildOtpHash(email, codigo);
+    if (!timingSafeEqual(expectedHash, verificacion.codigo_hash)) {
+      await verificacion.update({
+        intentos: (verificacion.intentos || 0) + 1,
+        updated_at: new Date()
+      });
+      return res.status(400).json({
+        success: false,
+        message: 'Código inválido'
+      });
+    }
+
+    const verifiedAt = new Date();
+    await verificacion.update({
+      verified: true,
+      verified_at: verifiedAt,
+      codigo_hash: null,
+      expires_at: null,
+      intentos: 0,
+      updated_at: verifiedAt
+    });
+
+    return res.json({
+      success: true,
+      message: 'Correo verificado correctamente.',
+      data: {
+        email,
+        verified: true,
+        verified_at: verifiedAt.toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('Error verificando OTP de correo:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error verificando correo'
     });
   }
 });
@@ -295,6 +493,28 @@ router.post('/', async (req, res) => {
       });
     }
 
+    const emailNormalizado = email ? normalizarEmail(email) : null;
+    if (emailNormalizado && !validarFormatoEmail(emailNormalizado)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email inválido'
+      });
+    }
+
+    if (emailNormalizado) {
+      const verificacion = await ClienteEmailVerificacion.findOne({ where: { email: emailNormalizado } });
+      const isVerified = Boolean(verificacion?.verified);
+      const verifiedAtMs = verificacion?.verified_at ? new Date(verificacion.verified_at).getTime() : 0;
+      const verificationWindowMs = 24 * 60 * 60 * 1000;
+
+      if (!isVerified || !verifiedAtMs || (Date.now() - verifiedAtMs) > verificationWindowMs) {
+        return res.status(400).json({
+          success: false,
+          message: 'El correo no ha sido verificado'
+        });
+      }
+    }
+
     const referidoFlag = es_referido === true || es_referido === 'true' || es_referido === 1 || es_referido === '1';
     const montoReferidoNumero = monto_referido !== undefined && monto_referido !== null && `${monto_referido}` !== ''
       ? parseFloat(monto_referido)
@@ -311,7 +531,7 @@ router.post('/', async (req, res) => {
       nombre,
       apellido,
       telefono,
-      email,
+      email: emailNormalizado,
       direccion,
       nombre_contacto,
       apellido_contacto,
@@ -325,6 +545,13 @@ router.post('/', async (req, res) => {
       observaciones,
       fecha_registro: new Date()
     });
+
+    if (emailNormalizado) {
+      await ClienteEmailVerificacion.update(
+        { verified: false, verified_at: null, updated_at: new Date() },
+        { where: { email: emailNormalizado } }
+      );
+    }
 
     res.status(201).json({
       success: true,
