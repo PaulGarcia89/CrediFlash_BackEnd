@@ -7,6 +7,39 @@ const { authenticateToken, requireRole } = require('../middleware/auth');
 
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
 
+const buildDocumentUrl = (req, documentoId, disposition = 'inline') =>
+  `${req.protocol}://${req.get('host')}/api/documentos/${documentoId}/download?disposition=${disposition}`;
+
+router.get('/:id/url', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const documento = await SolicitudDocumento.findByPk(id);
+
+    if (!documento) {
+      return res.status(404).json({
+        success: false,
+        message: 'Documento no encontrado'
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        id: documento.id,
+        tipo: documento.tipo_documento || null,
+        url: buildDocumentUrl(req, documento.id, 'inline'),
+        url_descarga: buildDocumentUrl(req, documento.id, 'attachment')
+      }
+    });
+  } catch (error) {
+    console.error('Error obteniendo URL de documento:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error al obtener URL del documento'
+    });
+  }
+});
+
 router.get('/:id/download', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -34,7 +67,9 @@ router.get('/:id/download', authenticateToken, async (req, res) => {
     if (!fs.existsSync(rutaAbsoluta)) {
       return res.status(404).json({
         success: false,
-        message: 'Archivo no disponible en el servidor'
+        message: (documento.tipo_documento || '').toUpperCase() === 'CONTRATO_CREDITO'
+          ? 'Contrato no disponible en almacenamiento'
+          : 'Archivo no disponible en el servidor'
       });
     }
 

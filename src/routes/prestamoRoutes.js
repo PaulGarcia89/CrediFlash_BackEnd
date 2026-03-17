@@ -217,6 +217,7 @@ const ensurePrestamoContratoColumn = async () => {
 // GET /api/prestamos - Obtener todos los préstamos (paginado y filtrado)
 router.get('/', async (req, res) => {
   try {
+    await ensureSolicitudDocumentoSchema();
     await ensurePrestamoContratoColumn();
     const {
       page = 1,
@@ -275,12 +276,41 @@ router.get('/', async (req, res) => {
     }
 
     const { count, rows: prestamos } = await Prestamo.findAndCountAll(queryOptions);
+    const solicitudIds = prestamos
+      .map((prestamo) => prestamo?.solicitud?.id || prestamo?.solicitud_id)
+      .filter(Boolean);
 
-    const prestamosConClienteId = prestamos.map((prestamo) => ({
-      ...prestamo.toJSON(),
-      cliente_id: prestamo?.solicitud?.cliente_id || null,
-      contrato_url: construirUrlArchivoRelativo(req, prestamo?.contrato)
-    }));
+    const contratos = solicitudIds.length
+      ? await SolicitudDocumento.findAll({
+          where: {
+            solicitud_id: { [Op.in]: solicitudIds },
+            tipo_documento: 'CONTRATO_CREDITO'
+          },
+          order: [['creado_en', 'DESC']]
+        })
+      : [];
+
+    const contratoBySolicitud = new Map();
+    contratos.forEach((doc) => {
+      if (!contratoBySolicitud.has(doc.solicitud_id)) {
+        contratoBySolicitud.set(doc.solicitud_id, doc);
+      }
+    });
+
+    const prestamosConClienteId = prestamos.map((prestamo) => {
+      const raw = prestamo.toJSON();
+      const solicitudId = raw?.solicitud?.id || raw?.solicitud_id;
+      const contratoDoc = contratoBySolicitud.get(solicitudId);
+
+      return {
+        ...raw,
+        cliente_id: raw?.solicitud?.cliente_id || null,
+        contrato_credito_id: contratoDoc?.id || null,
+        contrato_url: contratoDoc
+          ? construirUrlDocumento(req, contratoDoc.id, 'inline')
+          : construirUrlArchivoRelativo(req, raw?.contrato)
+      };
+    });
 
     if (format === 'csv') {
       const csvRows = prestamosConClienteId.map((item) => ({
@@ -549,6 +579,7 @@ router.post(
           data: {
             prestamo,
             cuotas_generadas: cuotasGeneradas,
+            contrato_credito_id: contrato.id,
             contrato: {
               id: contrato.id,
               nombre: contrato.nombre_original,
