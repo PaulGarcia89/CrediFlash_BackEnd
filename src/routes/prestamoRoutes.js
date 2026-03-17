@@ -388,7 +388,7 @@ router.post(
 router.post('/:id/pago-semanal', async (req, res) => {
   try {
     const { id } = req.params;
-    const { monto_pago } = req.body;
+    const { monto_pago, monto_penalizacion = 0 } = req.body;
 
     const resultado = await sequelize.transaction(async (transaction) => {
       const prestamo = await Prestamo.findByPk(id, {
@@ -421,18 +421,41 @@ router.post('/:id/pago-semanal', async (req, res) => {
 
       const montoPagoEsperado = parseFloat(prestamo.pagos_semanales) || 0;
       const montoPagoRecibido = parseFloat(monto_pago);
+      const montoPenalizacion = parseFloat(monto_penalizacion) || 0;
 
       if (!monto_pago || isNaN(montoPagoRecibido)) {
         return { status: 400, body: { success: false, message: 'monto_pago es requerido' } };
       }
 
-      if (montoPagoRecibido !== montoPagoEsperado) {
+      if (isNaN(montoPenalizacion) || montoPenalizacion < 0) {
+        return { status: 400, body: { success: false, message: 'monto_penalizacion debe ser mayor o igual a 0' } };
+      }
+
+      const hoy = new Date();
+      hoy.setHours(0, 0, 0, 0);
+      const fechaVencimientoCuota = new Date(cuota.fecha_vencimiento);
+      fechaVencimientoCuota.setHours(0, 0, 0, 0);
+      const cuotaVencida = fechaVencimientoCuota < hoy;
+
+      if (!cuotaVencida && montoPenalizacion > 0) {
         return {
           status: 400,
           body: {
             success: false,
-            message: 'El monto del pago debe ser exactamente igual a pagos_semanales',
-            expected: montoPagoEsperado
+            message: 'Solo se puede aplicar penalización cuando la cuota está vencida'
+          }
+        };
+      }
+
+      const montoEsperadoConPenalizacion = parseFloat((montoPagoEsperado + montoPenalizacion).toFixed(2));
+
+      if (montoPagoRecibido !== montoEsperadoConPenalizacion) {
+        return {
+          status: 400,
+          body: {
+            success: false,
+            message: 'El monto del pago debe ser igual a pagos_semanales + penalización',
+            expected: montoEsperadoConPenalizacion
           }
         };
       }
@@ -451,9 +474,13 @@ router.post('/:id/pago-semanal', async (req, res) => {
       }
 
       // Registrar pago completo de la cuota
-      cuota.monto_pagado = montoCuota;
+      cuota.monto_pagado = parseFloat((montoCuota + montoPenalizacion).toFixed(2));
       cuota.fecha_pago = new Date();
       cuota.estado = 'PAGADO';
+      if (montoPenalizacion > 0) {
+        const notaPenalizacion = `Penalización aplicada: ${montoPenalizacion.toFixed(2)}`;
+        cuota.observaciones = cuota.observaciones ? `${cuota.observaciones}\n${notaPenalizacion}` : notaPenalizacion;
+      }
       await cuota.save({ transaction });
 
       const montoPago = montoPagoRecibido;
@@ -462,7 +489,7 @@ router.post('/:id/pago-semanal', async (req, res) => {
       const pagosPendientes = Math.max(totalSemanas - pagosHechos, 0);
 
       const pagadoTotal = (parseFloat(prestamo.pagado) || 0) + montoPago;
-      const pendienteTotal = Math.max((parseFloat(prestamo.pendiente) || 0) - montoPago, 0);
+      const pendienteTotal = Math.max((parseFloat(prestamo.pendiente) || 0) - montoCuota, 0);
 
       const status = pagosPendientes === 0 ? 'PAGADO' : `LE QUEDAN ${pagosPendientes} PAGOS POR PAGAR`;
 
@@ -493,6 +520,7 @@ router.post('/:id/pago-semanal', async (req, res) => {
             cuotas_restantes: pagosPendientes,
             cuota_id: cuota.id,
             monto_pagado: montoPago,
+            monto_penalizacion: montoPenalizacion,
             pagos_hechos: pagosHechos,
             pagos_pendientes: pagosPendientes,
             pagado: pagadoTotal,
