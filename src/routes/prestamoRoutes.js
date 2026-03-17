@@ -5,7 +5,7 @@ const multer = require('multer');
 const router = express.Router();
 const { Prestamo, Solicitud, Cliente, Cuota, SolicitudDocumento, sequelize } = require('../models');
 const { Op } = require('sequelize');
-const { authenticateToken, requireRole } = require('../middleware/auth');
+const { authenticateToken, requirePermission } = require('../middleware/auth');
 const { sendCsv } = require('../utils/exporter');
 
 const calcularFechaVencimiento = (fechaInicio, numSemanas) => {
@@ -215,7 +215,7 @@ const ensurePrestamoContratoColumn = async () => {
 };
 
 // GET /api/prestamos - Obtener todos los préstamos (paginado y filtrado)
-router.get('/', async (req, res) => {
+router.get('/', authenticateToken, requirePermission('prestamos.view'), async (req, res) => {
   try {
     await ensureSolicitudDocumentoSchema();
     await ensurePrestamoContratoColumn();
@@ -375,7 +375,7 @@ router.get('/', async (req, res) => {
 });
 
 // POST /api/prestamos - Crear préstamo manualmente
-router.post('/', async (req, res) => {
+router.post('/', authenticateToken, requirePermission('prestamos.create'), async (req, res) => {
   try {
     const { 
       solicitud_id, 
@@ -419,7 +419,7 @@ router.post('/', async (req, res) => {
 router.post(
   '/solicitud/:solicitudId',
   authenticateToken,
-  requireRole('ANALISTA', 'SUPERVISOR', 'ADMINISTRADOR'),
+  requirePermission('solicitudes.approve'),
   uploadContratoCredito,
   async (req, res) => {
   try {
@@ -610,7 +610,7 @@ router.post(
 );
 
 // POST /api/prestamos/:id/pago-semanal - Registrar pago de cuota semanal desde préstamo
-router.post('/:id/pago-semanal', async (req, res) => {
+router.post('/:id/pago-semanal', authenticateToken, requirePermission('prestamos.pay'), async (req, res) => {
   try {
     const { id } = req.params;
     const { monto_pago, monto_penalizacion = 0 } = req.body;

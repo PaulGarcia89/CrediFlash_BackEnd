@@ -9,7 +9,7 @@ const { sendCsv } = require('../utils/exporter');
 const { calcularTasaEfectivaPorModalidad, normalizarModalidad, MODALIDADES_PERMITIDAS } = require('../utils/tasaModalidad');
 
 // Importar middleware desde auth
-const { authenticateToken, requireRole } = require('../middleware/auth');
+const { authenticateToken, requirePermission } = require('../middleware/auth');
 
 // ========== CONFIGURACIÓN DE CARGA DE DOCUMENTOS ==========
 const DOCUMENT_UPLOAD_DIR = path.join(__dirname, '..', '..', 'uploads', 'solicitudes');
@@ -399,7 +399,7 @@ async function aprobarSolicitudYCrearPrestamo(solicitudId, analistaId) {
 router.post(
   '/',
   authenticateToken,
-  requireRole('ANALISTA', 'SUPERVISOR', 'ADMINISTRADOR'),
+  requirePermission('solicitudes.create'),
   uploadSolicitudDocumentos,
   async (req, res) => {
   try {
@@ -657,7 +657,7 @@ router.post(
 });
 
 // GET /api/solicitudes - Listar todas las solicitudes
-router.get('/', authenticateToken, async (req, res) => {
+router.get('/', authenticateToken, requirePermission('solicitudes.view'), async (req, res) => {
   try {
     await ensureSolicitudDocumentoTipoColumn();
     const { 
@@ -778,7 +778,7 @@ router.get('/', authenticateToken, async (req, res) => {
 });
 
 // GET /api/solicitudes/:id - Obtener solicitud por ID
-router.get('/:id', authenticateToken, async (req, res) => {
+router.get('/:id', authenticateToken, requirePermission('solicitudes.view'), async (req, res) => {
   try {
     await ensureSolicitudDocumentoTipoColumn();
     const solicitud = await Solicitud.findByPk(req.params.id, {
@@ -840,7 +840,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
 });
 
 // PUT /api/solicitudes/:id - Actualizar solicitud (recalcula tasa por modalidad)
-router.put('/:id', authenticateToken, requireRole('ANALISTA', 'SUPERVISOR', 'ADMINISTRADOR'), async (req, res) => {
+router.put('/:id', authenticateToken, requirePermission('solicitudes.create'), async (req, res) => {
   try {
     const solicitud = await Solicitud.findByPk(req.params.id);
     if (!solicitud) {
@@ -968,7 +968,7 @@ router.put('/:id', authenticateToken, requireRole('ANALISTA', 'SUPERVISOR', 'ADM
 });
 
 // POST /api/solicitudes/:id/aprobar - Aprobar solicitud Y crear préstamo
-router.post('/:id/aprobar', authenticateToken, requireRole('ANALISTA', 'SUPERVISOR', 'ADMINISTRADOR'), async (req, res) => {
+router.post('/:id/aprobar', authenticateToken, requirePermission('solicitudes.approve'), async (req, res) => {
   try {
     const { id } = req.params;
     const { comentario } = req.body;
@@ -1018,7 +1018,7 @@ router.post('/:id/aprobar', authenticateToken, requireRole('ANALISTA', 'SUPERVIS
 });
 
 // POST /api/solicitudes/:id/rechazar - Rechazar solicitud
-router.post('/:id/rechazar', authenticateToken, requireRole('ANALISTA', 'SUPERVISOR', 'ADMINISTRADOR'), async (req, res) => {
+router.post('/:id/rechazar', authenticateToken, requirePermission('solicitudes.reject'), async (req, res) => {
   try {
     const { id } = req.params;
     const { razon_rechazo } = req.body;
@@ -1073,7 +1073,7 @@ router.post('/:id/rechazar', authenticateToken, requireRole('ANALISTA', 'SUPERVI
 });
 
 // POST /api/solicitudes/:id/rechazar-simple - Rechazar solicitud (sin razón)
-router.post('/:id/rechazar-simple', authenticateToken, requireRole('ANALISTA', 'SUPERVISOR', 'ADMINISTRADOR'), async (req, res) => {
+router.post('/:id/rechazar-simple', authenticateToken, requirePermission('solicitudes.reject'), async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -1115,7 +1115,7 @@ router.post('/:id/rechazar-simple', authenticateToken, requireRole('ANALISTA', '
 router.post(
   '/:id/ejecutar-modelo-nuevo',
   authenticateToken,
-  requireRole('ANALISTA', 'SUPERVISOR', 'ADMINISTRADOR'),
+  requirePermission('ratings.run'),
   async (req, res) => {
     try {
       const { id } = req.params;
@@ -1172,7 +1172,7 @@ router.post(
 router.post(
   '/:id/ejecutar-modelo-antiguo',
   authenticateToken,
-  requireRole('ANALISTA', 'SUPERVISOR', 'ADMINISTRADOR'),
+  requirePermission('ratings.run'),
   async (req, res) => {
     try {
       const { id } = req.params;
@@ -1226,7 +1226,7 @@ router.post(
 );
 
 // GET /api/solicitudes/cliente/:cliente_id - Obtener solicitudes de un cliente
-router.get('/cliente/:cliente_id', authenticateToken, async (req, res) => {
+router.get('/cliente/:cliente_id', authenticateToken, requirePermission('solicitudes.view'), async (req, res) => {
   try {
     await ensureSolicitudDocumentoTipoColumn();
     const { cliente_id } = req.params;

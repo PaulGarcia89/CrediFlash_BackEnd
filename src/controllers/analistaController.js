@@ -3,6 +3,7 @@ const { Analista, Role } = require("../models");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { Op } = require("sequelize");
+const { getAnalistaPermissionCodes } = require('../middleware/auth');
 
 const SALT_ROUNDS = 10;
 
@@ -194,6 +195,7 @@ class AnalistaController {
         process.env.JWT_SECRET,
         { expiresIn: "8h" }
       );
+      const permission_codes = await getAnalistaPermissionCodes(analista.id);
   
       // ✅ responde sin password
       return res.json({
@@ -202,7 +204,8 @@ class AnalistaController {
         data: {
           token,
           user: {
-            ...mapAnalistaWithRole(analistaConAcceso)
+            ...mapAnalistaWithRole(analistaConAcceso),
+            permission_codes
           },
         },
       });
@@ -241,7 +244,16 @@ class AnalistaController {
       return res.json({
         success: true,
         message: "✅ Perfil obtenido",
-        data: mapAnalistaWithRole(analista),
+        data: {
+          user: {
+            ...mapAnalistaWithRole(analista),
+            permission_codes: await getAnalistaPermissionCodes(analista.id)
+          },
+          analista: {
+            ...mapAnalistaWithRole(analista),
+            permission_codes: await getAnalistaPermissionCodes(analista.id)
+          }
+        },
       });
     } catch (error) {
       console.error("❌ Error getPerfil:", error);
@@ -362,6 +374,25 @@ class AnalistaController {
       });
     } catch (error) {
       console.error("❌ Error listarAnalistas:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Error en el servidor",
+        error: process.env.NODE_ENV === "development" ? error.message : undefined,
+      });
+    }
+  }
+
+  async getPermisosEfectivos(req, res) {
+    try {
+      const permission_codes = await getAnalistaPermissionCodes(req.user.id);
+      return res.json({
+        success: true,
+        data: {
+          permission_codes
+        }
+      });
+    } catch (error) {
+      console.error("❌ Error getPermisosEfectivos:", error);
       return res.status(500).json({
         success: false,
         message: "Error en el servidor",

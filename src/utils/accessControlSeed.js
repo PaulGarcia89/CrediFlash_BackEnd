@@ -1,3 +1,5 @@
+const { Op } = require('sequelize');
+
 const ROLE_DEFINITIONS = [
   { nombre: 'ADMINISTRADOR', prioridad: 1, descripcion: 'Acceso total al sistema' },
   { nombre: 'SUPERVISOR', prioridad: 2, descripcion: 'Control operativo y revisión' },
@@ -18,6 +20,8 @@ const PERMISSION_DEFINITIONS = [
   { codigo: 'prestamos.pay', modulo: 'PRESTAMOS', categoria: 'PAGOS', nombre: 'Registrar pago semanal' },
   { codigo: 'cuotas.view', modulo: 'CUOTAS', categoria: 'GESTION', nombre: 'Ver cuotas' },
   { codigo: 'cuotas.manage', modulo: 'CUOTAS', categoria: 'GESTION', nombre: 'Generar/editar cuotas' },
+  { codigo: 'documentos.view', modulo: 'DOCUMENTOS', categoria: 'GESTION', nombre: 'Ver/descargar documentos' },
+  { codigo: 'documentos.delete', modulo: 'DOCUMENTOS', categoria: 'GESTION', nombre: 'Eliminar documentos' },
   { codigo: 'ratings.run', modulo: 'RATINGS', categoria: 'MODELOS', nombre: 'Ejecutar modelos de rating' },
   { codigo: 'analytics.view', modulo: 'REPORTES', categoria: 'ANALYTICS', nombre: 'Ver reportes/analytics' },
   { codigo: 'analistas.view', modulo: 'ANALISTAS', categoria: 'ADMIN', nombre: 'Ver analistas' },
@@ -42,6 +46,8 @@ const DEFAULT_ROLE_PERMISSION_CODES = {
     'prestamos.pay',
     'cuotas.view',
     'cuotas.manage',
+    'documentos.view',
+    'documentos.delete',
     'ratings.run',
     'analytics.view',
     'analistas.view',
@@ -54,12 +60,10 @@ const DEFAULT_ROLE_PERMISSION_CODES = {
     'clientes.edit',
     'solicitudes.view',
     'solicitudes.create',
-    'solicitudes.approve',
-    'solicitudes.reject',
     'prestamos.view',
-    'prestamos.create',
     'prestamos.pay',
     'cuotas.view',
+    'documentos.view',
     'ratings.run'
   ]
 };
@@ -100,9 +104,12 @@ async function ensureAccessControlSeed(models, { transaction } = {}) {
     const role = roleMap[roleName];
     if (!role) continue;
 
+    const permissionIdsForRole = [];
+
     for (const codigo of codigos) {
       const permiso = permisoMap[codigo];
       if (!permiso) continue;
+      permissionIdsForRole.push(permiso.id);
 
       await RolePermiso.findOrCreate({
         where: {
@@ -113,6 +120,16 @@ async function ensureAccessControlSeed(models, { transaction } = {}) {
         transaction
       });
     }
+
+    await RolePermiso.destroy({
+      where: {
+        role_id: role.id,
+        permiso_id: {
+          [Op.notIn]: permissionIdsForRole.length ? permissionIdsForRole : ['00000000-0000-0000-0000-000000000000']
+        }
+      },
+      transaction
+    });
   }
 
   const analistas = await Analista.findAll({

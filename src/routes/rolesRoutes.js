@@ -1,13 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const roleController = require('../controllers/roleController');
-const { authenticateToken, requireRole } = require('../middleware/auth');
+const { authenticateToken, requirePermission } = require('../middleware/auth');
 
 // Seed/manual bootstrap de roles y permisos (solo admin)
 router.post(
   '/seed',
   authenticateToken,
-  requireRole('ADMINISTRADOR'),
+  requirePermission('roles.manage'),
   roleController.seed
 );
 
@@ -15,42 +15,42 @@ router.post(
 router.get(
   '/',
   authenticateToken,
-  requireRole('ADMINISTRADOR'),
+  requirePermission('roles.view'),
   roleController.listRoles
 );
 
 router.get(
   '/catalogo-permisos',
   authenticateToken,
-  requireRole('ADMINISTRADOR'),
+  requirePermission('roles.view'),
   roleController.getPermisoCatalog
 );
 
 router.post(
   '/',
   authenticateToken,
-  requireRole('ADMINISTRADOR'),
+  requirePermission('roles.manage'),
   roleController.createRole
 );
 
 router.put(
   '/:id',
   authenticateToken,
-  requireRole('ADMINISTRADOR'),
+  requirePermission('roles.manage'),
   roleController.updateRole
 );
 
 router.get(
   '/:id/permisos',
   authenticateToken,
-  requireRole('ADMINISTRADOR'),
+  requirePermission('roles.view'),
   roleController.getRolePermissions
 );
 
 router.put(
   '/:id/permisos',
   authenticateToken,
-  requireRole('ADMINISTRADOR'),
+  requirePermission('roles.manage'),
   roleController.updateRolePermissions
 );
 

@@ -3,14 +3,14 @@ const fs = require('fs');
 const path = require('path');
 const router = express.Router();
 const { SolicitudDocumento } = require('../models');
-const { authenticateToken, requireRole } = require('../middleware/auth');
+const { authenticateToken, requirePermission } = require('../middleware/auth');
 
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
 
 const buildDocumentUrl = (req, documentoId, disposition = 'inline') =>
   `${req.protocol}://${req.get('host')}/api/documentos/${documentoId}/download?disposition=${disposition}`;
 
-router.get('/:id/url', async (req, res) => {
+router.get('/:id/url', authenticateToken, requirePermission('documentos.view'), async (req, res) => {
   try {
     const { id } = req.params;
     const documento = await SolicitudDocumento.findByPk(id);
@@ -40,7 +40,7 @@ router.get('/:id/url', async (req, res) => {
   }
 });
 
-router.get('/:id/download', async (req, res) => {
+router.get('/:id/download', authenticateToken, requirePermission('documentos.view'), async (req, res) => {
   try {
     const { id } = req.params;
     const { disposition = 'inline' } = req.query;
@@ -91,7 +91,7 @@ router.get('/:id/download', async (req, res) => {
 router.delete(
   '/:id',
   authenticateToken,
-  requireRole('ANALISTA', 'SUPERVISOR', 'ADMINISTRADOR'),
+  requirePermission('documentos.delete'),
   async (req, res) => {
     try {
       const { id } = req.params;

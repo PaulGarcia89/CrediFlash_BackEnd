@@ -1,6 +1,7 @@
 // src/routes/ratingRoutes.js - VERSIÓN CORREGIDA Y COMPLETA
 const express = require('express');
 const router = express.Router();
+const { authenticateToken, requirePermission } = require('../middleware/auth');
 
 console.log('🔄 Cargando ratingRoutes.js...');
 
@@ -58,7 +59,7 @@ try {
 console.log('🔧 Configurando rutas disponibles...');
 
 // 1. Ruta de prueba (SIEMPRE debe existir)
-router.get('/test', (req, res) => {
+router.get('/test', authenticateToken, requirePermission('ratings.run'), (req, res) => {
     console.log('📞 Llamada a /api/ratings/test');
     if (ratingController.testRatingSystem) {
         return ratingController.testRatingSystem(req, res);
@@ -70,7 +71,7 @@ router.get('/test', (req, res) => {
 });
 
 // 2. Calificación de cliente
-router.get('/client/:nombre', (req, res) => {
+router.get('/client/:nombre', authenticateToken, requirePermission('ratings.run'), (req, res) => {
     console.log(`📞 Llamada a /api/ratings/client/${req.params.nombre}`);
     if (ratingController.getClientRating) {
         return ratingController.getClientRating(req, res);
@@ -82,7 +83,7 @@ router.get('/client/:nombre', (req, res) => {
 });
 
 // 3. Ranking de clientes
-router.get('/ranking', (req, res) => {
+router.get('/ranking', authenticateToken, requirePermission('ratings.run'), (req, res) => {
     console.log('📞 Llamada a /api/ratings/ranking');
     if (ratingController.getAllClientsRanking) {
         return ratingController.getAllClientsRanking(req, res);
@@ -94,7 +95,7 @@ router.get('/ranking', (req, res) => {
 });
 
 // 4. Ruta raíz de ratings
-router.get('/', (req, res) => {
+router.get('/', authenticateToken, requirePermission('ratings.run'), (req, res) => {
     console.log('📞 Llamada a /api/ratings/');
     res.json({
         success: true,

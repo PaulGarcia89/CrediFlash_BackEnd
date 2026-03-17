@@ -19,7 +19,7 @@ const authenticateToken = (req, res, next) => {
     process.env.JWT_SECRET || 'crediflash_jwt_secret_key_2024_change_in_production', 
     (err, user) => {
       if (err) {
-        return res.status(403).json({
+        return res.status(401).json({
           success: false,
           message: 'Token inválido o expirado'
         });
@@ -43,7 +43,8 @@ const requireRole = (...allowedRoles) => {
     if (!allowedRoles.includes(req.user.rol)) {
       return res.status(403).json({
         success: false,
-        message: `Acceso denegado. Rol requerido: ${allowedRoles.join(' o ')}`
+        message: 'No tienes permisos para realizar esta acción.',
+        code: 'FORBIDDEN'
       });
     }
     next();
@@ -99,7 +100,8 @@ const requirePermission = (...allowedPermissionCodes) => {
       if (!hasPermission) {
         return res.status(403).json({
           success: false,
-          message: `Acceso denegado. Permiso requerido: ${allowedPermissionCodes.join(' o ')}`
+          message: 'No tienes permisos para realizar esta acción.',
+          code: 'FORBIDDEN'
         });
       }
 

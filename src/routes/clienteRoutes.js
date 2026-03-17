@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const { Cliente, Prestamo, Solicitud, SolicitudDocumento, ClienteEmailVerificacion, sequelize } = require('../models');
 const { Op } = require('sequelize');
 const { sendCsv } = require('../utils/exporter');
-const { authenticateToken } = require('../middleware/auth');
+const { authenticateToken, requirePermission } = require('../middleware/auth');
 const { sendOtpVerificationEmail } = require('../utils/emailVerificationService');
 
 const OTP_EXPIRES_SECONDS = 600;
@@ -63,7 +63,7 @@ const ensureSolicitudDocumentoTipoColumn = async () => {
 };
 
 // GET /api/clientes - Listar clientes con paginación
-router.get('/', async (req, res) => {
+router.get('/', authenticateToken, requirePermission('clientes.view'), async (req, res) => {
   try {
     const { 
       page = 1, 
@@ -345,7 +345,7 @@ router.post('/verificacion-email/verificar', async (req, res) => {
 });
 
 // GET /api/clientes/:id - Obtener cliente por ID
-router.get('/:id', async (req, res) => {
+router.get('/:id', authenticateToken, requirePermission('clientes.view'), async (req, res) => {
   try {
     const cliente = await Cliente.findByPk(req.params.id);
     
@@ -370,7 +370,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // GET /api/clientes/:clienteId/documentos - Documentos PDF del cliente
-router.get('/:clienteId/documentos', authenticateToken, async (req, res) => {
+router.get('/:clienteId/documentos', authenticateToken, requirePermission('clientes.view'), async (req, res) => {
   try {
     await ensureSolicitudDocumentoTipoColumn();
     const { clienteId } = req.params;
@@ -433,7 +433,7 @@ router.get('/:clienteId/documentos', authenticateToken, async (req, res) => {
 });
 
 // GET /api/clientes/:id/prestamos - Historial de préstamos del cliente (paginado)
-router.get('/:id/prestamos', async (req, res) => {
+router.get('/:id/prestamos', authenticateToken, requirePermission('prestamos.view'), async (req, res) => {
   try {
     const { id } = req.params;
     const { page = 1, limit = 20 } = req.query;
@@ -486,7 +486,7 @@ router.get('/:id/prestamos', async (req, res) => {
 });
 
 // POST /api/clientes - Crear cliente
-router.post('/', async (req, res) => {
+router.post('/', authenticateToken, requirePermission('clientes.create'), async (req, res) => {
   try {
     const { 
       nombre, 
@@ -598,7 +598,7 @@ router.post('/', async (req, res) => {
 });
 
 // PUT /api/clientes/:id - Actualizar cliente
-router.put('/:id', async (req, res) => {
+router.put('/:id', authenticateToken, requirePermission('clientes.edit'), async (req, res) => {
   try {
     const cliente = await Cliente.findByPk(req.params.id);
     
@@ -667,7 +667,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE /api/clientes/:id - Eliminar cliente (cambiar estado a INACTIVO)
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authenticateToken, requirePermission('clientes.edit'), async (req, res) => {
   try {
     const cliente = await Cliente.findByPk(req.params.id);
     
@@ -695,7 +695,7 @@ router.delete('/:id', async (req, res) => {
 });
 
 // GET /api/clientes/search/:term - Buscar clientes
-router.get('/search/:term', async (req, res) => {
+router.get('/search/:term', authenticateToken, requirePermission('clientes.view'), async (req, res) => {
   try {
     const { term } = req.params;
     
@@ -725,7 +725,7 @@ router.get('/search/:term', async (req, res) => {
 });
 
 // GET /api/clientes/stats/estadisticas - Estadísticas de clientes
-router.get('/stats/estadisticas', async (req, res) => {
+router.get('/stats/estadisticas', authenticateToken, requirePermission('clientes.view'), async (req, res) => {
   try {
     const totalClientes = await Cliente.count();
     const clientesActivos = await Cliente.count({ where: { estado: 'ACTIVO' } });

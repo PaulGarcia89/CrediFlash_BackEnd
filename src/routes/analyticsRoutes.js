@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { Op, fn, col, literal } = require('sequelize');
 const { Prestamo, Solicitud, Cliente, Cuota, sequelize } = require('../models');
+const { authenticateToken, requirePermission } = require('../middleware/auth');
 
 const parseFecha = (value) => {
   if (!value) return null;
@@ -9,7 +10,7 @@ const parseFecha = (value) => {
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
-router.get('/dashboard', async (req, res) => {
+router.get('/dashboard', authenticateToken, requirePermission('analytics.view'), async (req, res) => {
   try {
     const { fecha_desde, fecha_hasta } = req.query;
     const desde = parseFecha(fecha_desde);

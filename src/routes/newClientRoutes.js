@@ -1,6 +1,7 @@
 // routes/newClientRoutes.js - Con tiempoSemanas como plazo del préstamo
 const express = require('express');
 const router = express.Router();
+const { authenticateToken, requirePermission } = require('../middleware/auth');
 
 /**
  * @route POST /api/ratings/new-client
@@ -17,7 +18,7 @@ const router = express.Router();
  *   ingresosMensuales: number
  * }
  */
-router.post('/new-client', (req, res) => {
+router.post('/new-client', authenticateToken, requirePermission('ratings.run'), (req, res) => {
   try {
     const {
       edad,
@@ -620,7 +621,7 @@ router.use((req, res, next) => {
 });
 
 // Ruta adicional para obtener información de las variables
-router.get('/new-client/variables', (req, res) => {
+router.get('/new-client/variables', authenticateToken, requirePermission('ratings.run'), (req, res) => {
   res.json({
     success: true,
     variables: {

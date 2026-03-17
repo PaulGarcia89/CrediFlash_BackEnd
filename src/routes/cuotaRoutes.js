@@ -2,7 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const cuotaController = require('../controllers/cuotaController');
-const { authenticateToken, requireRole } = require('../middleware/auth');
+const { authenticateToken, requirePermission } = require('../middleware/auth');
 
 const validateJobToken = (req, res, next) => {
   const configuredToken = process.env.NOTIFICATIONS_JOB_TOKEN;
@@ -28,46 +28,46 @@ const validateJobToken = (req, res, next) => {
 // ========== RUTAS PRINCIPALES ==========
 
 // Obtener todas las cuotas
-router.get('/', cuotaController.getAllCuotas);
+router.get('/', authenticateToken, requirePermission('cuotas.view'), cuotaController.getAllCuotas);
 
 // Obtener cuota por ID
-router.get('/:id', cuotaController.getCuotaById);
+router.get('/:id', authenticateToken, requirePermission('cuotas.view'), cuotaController.getCuotaById);
 
 // Obtener cuotas por préstamo
-router.get('/prestamo/:prestamoId', cuotaController.getCuotasByPrestamo);
+router.get('/prestamo/:prestamoId', authenticateToken, requirePermission('cuotas.view'), cuotaController.getCuotasByPrestamo);
 
 // Crear nueva cuota
-router.post('/', cuotaController.createCuota);
+router.post('/', authenticateToken, requirePermission('cuotas.manage'), cuotaController.createCuota);
 
 // Actualizar cuota
-router.put('/:id', cuotaController.updateCuota);
+router.put('/:id', authenticateToken, requirePermission('cuotas.manage'), cuotaController.updateCuota);
 
 // Registrar pago de cuota
-router.post('/:id/pago', cuotaController.registrarPago);
+router.post('/:id/pago', authenticateToken, requirePermission('prestamos.pay'), cuotaController.registrarPago);
 
 // Eliminar cuota
-router.delete('/:id', cuotaController.deleteCuota);
+router.delete('/:id', authenticateToken, requirePermission('cuotas.manage'), cuotaController.deleteCuota);
 
 // ========== RUTAS ESPECIALES ==========
 
 // Generar cuotas para préstamo
-router.post('/prestamo/:prestamoId/generar', cuotaController.generarCuotasParaPrestamo);
+router.post('/prestamo/:prestamoId/generar', authenticateToken, requirePermission('cuotas.manage'), cuotaController.generarCuotasParaPrestamo);
 // Generar cuotas semanales para préstamo
-router.post('/prestamo/:prestamoId/generar-semanales', cuotaController.generarCuotasSemanalesParaPrestamo);
+router.post('/prestamo/:prestamoId/generar-semanales', authenticateToken, requirePermission('cuotas.manage'), cuotaController.generarCuotasSemanalesParaPrestamo);
 // Generar cuotas semanales para todos los préstamos
-router.post('/prestamos/generar-semanales', cuotaController.generarCuotasSemanalesParaTodos);
+router.post('/prestamos/generar-semanales', authenticateToken, requirePermission('cuotas.manage'), cuotaController.generarCuotasSemanalesParaTodos);
 
 // Notificación manual por correo para una cuota
 router.post(
   '/:id/notificar-email',
   authenticateToken,
-  requireRole('ANALISTA', 'SUPERVISOR', 'ADMINISTRADOR'),
+  requirePermission('prestamos.pay'),
   cuotaController.enviarNotificacionEmailManual
 );
 router.post(
   '/prestamo/:prestamoId/notificar-email',
   authenticateToken,
-  requireRole('ANALISTA', 'SUPERVISOR', 'ADMINISTRADOR'),
+  requirePermission('prestamos.pay'),
   cuotaController.enviarNotificacionEmailManualPorPrestamo
 );
 
@@ -79,13 +79,13 @@ router.post(
 );
 
 // Obtener cuotas vencidas
-router.get('/reportes/vencidas', cuotaController.getCuotasVencidas);
+router.get('/reportes/vencidas', authenticateToken, requirePermission('cuotas.view'), cuotaController.getCuotasVencidas);
 
 // Obtener estadísticas
-router.get('/estadisticas/resumen', cuotaController.getEstadisticasCuotas);
+router.get('/estadisticas/resumen', authenticateToken, requirePermission('cuotas.view'), cuotaController.getEstadisticasCuotas);
 
 // Ruta de prueba
-router.get('/test/conexion', async (req, res) => {
+router.get('/test/conexion', authenticateToken, requirePermission('cuotas.view'), async (req, res) => {
   try {
     const { sequelize } = require('../models');
     
