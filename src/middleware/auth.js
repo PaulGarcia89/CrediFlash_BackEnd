@@ -8,6 +8,7 @@ const authenticateToken = (req, res, next) => {
   const token = authHeader && authHeader.split(' ')[1];
 
   if (!token) {
+    res.locals.error_message = 'Token de autenticación requerido';
     return res.status(401).json({
       success: false,
       message: 'Token de autenticación requerido'
@@ -19,6 +20,7 @@ const authenticateToken = (req, res, next) => {
     process.env.JWT_SECRET || 'crediflash_jwt_secret_key_2024_change_in_production', 
     (err, user) => {
       if (err) {
+        res.locals.error_message = 'Token inválido o expirado';
         return res.status(401).json({
           success: false,
           message: 'Token inválido o expirado'
@@ -34,6 +36,7 @@ const authenticateToken = (req, res, next) => {
 const requireRole = (...allowedRoles) => {
   return (req, res, next) => {
     if (!req.user) {
+      res.locals.error_message = 'Usuario no autenticado';
       return res.status(401).json({
         success: false,
         message: 'Usuario no autenticado'
@@ -41,6 +44,7 @@ const requireRole = (...allowedRoles) => {
     }
 
     if (!allowedRoles.includes(req.user.rol)) {
+      res.locals.error_message = 'No tienes permisos para realizar esta acción.';
       return res.status(403).json({
         success: false,
         message: 'No tienes permisos para realizar esta acción.',
@@ -84,6 +88,7 @@ const requirePermission = (...allowedPermissionCodes) => {
   return async (req, res, next) => {
     try {
       if (!req.user) {
+        res.locals.error_message = 'Usuario no autenticado';
         return res.status(401).json({
           success: false,
           message: 'Usuario no autenticado'
@@ -98,6 +103,7 @@ const requirePermission = (...allowedPermissionCodes) => {
       const hasPermission = allowedPermissionCodes.some((code) => permissionCodes.includes(code));
 
       if (!hasPermission) {
+        res.locals.error_message = 'No tienes permisos para realizar esta acción.';
         return res.status(403).json({
           success: false,
           message: 'No tienes permisos para realizar esta acción.',

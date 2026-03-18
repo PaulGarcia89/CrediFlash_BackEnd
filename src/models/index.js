@@ -10,6 +10,7 @@ const Solicitud = require('./Solicitud');
 const SolicitudDocumento = require('./SolicitudDocumento');
 const Prestamo = require('./Prestamo');
 const Cuota = require('./Cuota');
+const AuditLog = require('./AuditLog');
 const Role = require('./Role');
 const Permiso = require('./Permiso');
 const RolePermiso = require('./RolePermiso');
@@ -206,6 +207,7 @@ const models = {
   SolicitudDocumento,
   Prestamo,
   Cuota,
+  AuditLog,
   Role,
   Permiso,
   RolePermiso,
@@ -434,3 +436,19 @@ sequelize.options.dialectOptions = {
 };
 
 module.exports = models;
+// 5.1. ANALISTA - AUDIT LOGS (1:N)
+Analista.hasMany(AuditLog, {
+  foreignKey: 'analista_id',
+  as: 'audit_logs',
+  onDelete: 'SET NULL',
+  onUpdate: 'CASCADE'
+});
+
+AuditLog.belongsTo(Analista, {
+  foreignKey: 'analista_id',
+  as: 'analista',
+  onDelete: 'SET NULL',
+  onUpdate: 'CASCADE'
+});
+
+// 6. ROLES Y PERMISOS

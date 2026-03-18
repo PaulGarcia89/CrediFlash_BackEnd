@@ -14,6 +14,7 @@ const modeloAprobacionRoutes = require('./modeloAprobacionRoutes');
 const analyticsRoutes = require('./analyticsRoutes');
 const rolesRoutes = require('./rolesRoutes');
 const documentoRoutes = require('./documentoRoutes');
+const logsRoutes = require('./logsRoutes');
 
 // Rutas principales
 router.use('/analistas', analistaRoutes);
@@ -25,6 +26,7 @@ router.use('/modelos-aprobacion', modeloAprobacionRoutes);
 router.use('/analytics', analyticsRoutes);
 router.use('/roles', rolesRoutes);
 router.use('/documentos', documentoRoutes);
+router.use('/logs', logsRoutes);
 
 // Ruta de salud
 router.get('/health', (req, res) => {
@@ -36,5 +38,4 @@ router.get('/health', (req, res) => {
 });
 
 module.exports = router;
-
 

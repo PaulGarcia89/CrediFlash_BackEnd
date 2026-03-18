@@ -4,6 +4,8 @@ const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const path = require('path');
+const { requestContext } = require('./middleware/requestContext');
+const { auditTrail } = require('./middleware/auditTrail');
 
 // Importar rutas principales
 const routes = require('./routes');
@@ -45,6 +47,7 @@ app.use(cors({
 app.options('*', cors());
 
 app.use(morgan(environment === 'production' ? 'combined' : 'dev'));
+app.use(requestContext);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 const uploadsPath = path.resolve(__dirname, '..', 'uploads');
@@ -52,7 +55,7 @@ app.use('/uploads', express.static(uploadsPath));
 app.use('/api/uploads', express.static(uploadsPath));
 
 // ========== RUTAS API PRINCIPALES ==========
-app.use('/api', routes);
+app.use('/api', auditTrail, routes);
 
 // ========== RUTAS DE CALIFICACIÓN (RATING) ==========
 // ✅ Ambas rutas bajo /api/ratings para mantener compatibilidad

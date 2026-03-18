@@ -22,6 +22,8 @@ const PERMISSION_DEFINITIONS = [
   { codigo: 'cuotas.manage', modulo: 'CUOTAS', categoria: 'GESTION', nombre: 'Generar/editar cuotas' },
   { codigo: 'documentos.view', modulo: 'DOCUMENTOS', categoria: 'GESTION', nombre: 'Ver/descargar documentos' },
   { codigo: 'documentos.delete', modulo: 'DOCUMENTOS', categoria: 'GESTION', nombre: 'Eliminar documentos' },
+  { codigo: 'logs.view', modulo: 'LOGS', categoria: 'AUDITORIA', nombre: 'Ver logs de auditoría' },
+  { codigo: 'logs.manage', modulo: 'LOGS', categoria: 'AUDITORIA', nombre: 'Gestionar logs de auditoría' },
   { codigo: 'ratings.run', modulo: 'RATINGS', categoria: 'MODELOS', nombre: 'Ejecutar modelos de rating' },
   { codigo: 'analytics.view', modulo: 'REPORTES', categoria: 'ANALYTICS', nombre: 'Ver reportes/analytics' },
   { codigo: 'analistas.view', modulo: 'ANALISTAS', categoria: 'ADMIN', nombre: 'Ver analistas' },
