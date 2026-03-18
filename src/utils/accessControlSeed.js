@@ -24,6 +24,8 @@ const PERMISSION_DEFINITIONS = [
   { codigo: 'documentos.delete', modulo: 'DOCUMENTOS', categoria: 'GESTION', nombre: 'Eliminar documentos' },
   { codigo: 'logs.view', modulo: 'LOGS', categoria: 'AUDITORIA', nombre: 'Ver logs de auditoría' },
   { codigo: 'logs.manage', modulo: 'LOGS', categoria: 'AUDITORIA', nombre: 'Gestionar logs de auditoría' },
+  { codigo: 'reportes.view', modulo: 'REPORTES', categoria: 'BANCARIO', nombre: 'Ver carga de pagos bancarios' },
+  { codigo: 'reportes.manage', modulo: 'REPORTES', categoria: 'BANCARIO', nombre: 'Cargar pagos bancarios' },
   { codigo: 'ratings.run', modulo: 'RATINGS', categoria: 'MODELOS', nombre: 'Ejecutar modelos de rating' },
   { codigo: 'analytics.view', modulo: 'REPORTES', categoria: 'ANALYTICS', nombre: 'Ver reportes/analytics' },
   { codigo: 'analistas.view', modulo: 'ANALISTAS', categoria: 'ADMIN', nombre: 'Ver analistas' },

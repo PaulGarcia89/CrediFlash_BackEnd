@@ -53,6 +53,7 @@ const inferModule = (endpoint = '') => {
   if (endpoint.includes('/api/roles')) return 'Roles';
   if (endpoint.includes('/api/analistas')) return 'Analistas';
   if (endpoint.includes('/api/documentos')) return 'Documentos';
+  if (endpoint.includes('/api/reportes')) return 'Reportes';
   if (endpoint.includes('/api/auth')) return 'Auth';
   if (endpoint.includes('/api/analytics')) return 'Analytics';
   if (endpoint.includes('/api/ratings')) return 'Ratings';
@@ -67,6 +68,7 @@ const inferEntity = (endpoint = '') => {
   if (endpoint.includes('/api/roles')) return 'rol';
   if (endpoint.includes('/api/analistas')) return 'analista';
   if (endpoint.includes('/api/documentos')) return 'documento';
+  if (endpoint.includes('/api/reportes/pagos-bancarios')) return 'pago_bancario_cargado';
   return null;
 };
 
@@ -81,6 +83,7 @@ const inferAction = ({ method, endpoint, statusCode }) => {
   if (path.includes('/aprobar') || path.includes('/prestamos/solicitud/')) return isError ? 'Intento de aprobar solicitud fallido' : 'Aprobó solicitud y creó préstamo';
   if (path.includes('/rechazar')) return isError ? 'Intento de rechazo de solicitud fallido' : 'Rechazó solicitud';
   if (path.includes('/pago-semanal') || path.includes('/:id/pago')) return isError ? 'Intento de registrar pago fallido' : 'Registró pago';
+  if (path.includes('/pagos-bancarios/cargar')) return isError ? 'CARGA_PAGOS_BANCARIOS_ERROR' : 'CARGA_PAGOS_BANCARIOS';
   if (path.includes('/rol-acceso')) return isError ? 'Intento de asignación de rol fallido' : 'Asignó rol';
   if (path.includes('/permisos')) return isError ? 'Intento de actualización de permisos fallido' : 'Actualizó permisos';
 
@@ -148,6 +151,7 @@ const auditTrail = (req, res, next) => {
         query: req.query,
         body: req.body,
         params: req.params,
+        audit: res.locals?.audit_metadata || null,
         duration_ms: Date.now() - startedAt
       }),
       error_message: statusCode >= 400

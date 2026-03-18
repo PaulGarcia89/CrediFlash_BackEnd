@@ -10,6 +10,7 @@ const Solicitud = require('./Solicitud');
 const SolicitudDocumento = require('./SolicitudDocumento');
 const Prestamo = require('./Prestamo');
 const Cuota = require('./Cuota');
+const PagoBancarioCargado = require('./PagoBancarioCargado');
 const AuditLog = require('./AuditLog');
 const Role = require('./Role');
 const Permiso = require('./Permiso');
@@ -105,6 +106,21 @@ Cuota.belongsTo(Prestamo, {
   foreignKey: 'prestamo_id',
   as: 'prestamo',
   onDelete: 'CASCADE',
+  onUpdate: 'CASCADE'
+});
+
+// 5.1. ANALISTA - PAGOS BANCARIOS CARGADOS (1:N)
+Analista.hasMany(PagoBancarioCargado, {
+  foreignKey: 'creado_por_analista_id',
+  as: 'pagos_bancarios_cargados',
+  onDelete: 'RESTRICT',
+  onUpdate: 'CASCADE'
+});
+
+PagoBancarioCargado.belongsTo(Analista, {
+  foreignKey: 'creado_por_analista_id',
+  as: 'creado_por',
+  onDelete: 'RESTRICT',
   onUpdate: 'CASCADE'
 });
 
@@ -207,6 +223,7 @@ const models = {
   SolicitudDocumento,
   Prestamo,
   Cuota,
+  PagoBancarioCargado,
   AuditLog,
   Role,
   Permiso,
