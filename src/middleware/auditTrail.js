@@ -84,6 +84,7 @@ const inferAction = ({ method, endpoint, statusCode }) => {
   if (path.includes('/rechazar')) return isError ? 'Intento de rechazo de solicitud fallido' : 'Rechazó solicitud';
   if (path.includes('/pago-semanal') || path.includes('/:id/pago')) return isError ? 'Intento de registrar pago fallido' : 'Registró pago';
   if (path.includes('/pagos-bancarios/cargar')) return isError ? 'CARGA_PAGOS_BANCARIOS_ERROR' : 'CARGA_PAGOS_BANCARIOS';
+  if (path.includes('/reportes/generar')) return isError ? 'GENERACION_REPORTE_ERROR' : 'GENERACION_REPORTE';
   if (path.includes('/rol-acceso')) return isError ? 'Intento de asignación de rol fallido' : 'Asignó rol';
   if (path.includes('/permisos')) return isError ? 'Intento de actualización de permisos fallido' : 'Actualizó permisos';
 

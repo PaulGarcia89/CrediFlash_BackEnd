@@ -168,6 +168,38 @@ const sendCuotaReminderEmail = async ({
   });
 };
 
+const sendMailWithReportCsv = async ({
+  to,
+  subject,
+  text,
+  filename,
+  fileBuffer
+}) => {
+  if (!to) {
+    throw new Error('No se encontró correo destino para el reporte');
+  }
+  if (!fileBuffer || !filename) {
+    throw new Error('No se encontró adjunto CSV para el reporte');
+  }
+
+  const transporter = await createTransporter();
+  return transporter.sendMail({
+    from: DEFAULT_FROM,
+    to,
+    bcc: DEFAULT_BCC,
+    subject,
+    text,
+    attachments: [
+      {
+        filename,
+        content: fileBuffer,
+        contentType: 'text/csv'
+      }
+    ]
+  });
+};
+
 module.exports = {
-  sendCuotaReminderEmail
+  sendCuotaReminderEmail,
+  sendMailWithReportCsv
 };

@@ -5,6 +5,7 @@ const { Op } = require('sequelize');
 const crypto = require('crypto');
 const { PagoBancarioCargado } = require('../models');
 const { authenticateToken, requirePermission } = require('../middleware/auth');
+const reportesController = require('../controllers/reportesController');
 
 const router = express.Router();
 
@@ -370,6 +371,24 @@ router.get(
       });
     }
   }
+);
+
+router.get(
+  '/generar',
+  authenticateToken,
+  requirePermission('reportes.view'),
+  reportesController.generar
+);
+
+router.get(
+  '/:tipo',
+  authenticateToken,
+  requirePermission('reportes.view'),
+  (req, _res, next) => {
+    req.query.tipo = req.params.tipo;
+    next();
+  },
+  reportesController.generar
 );
 
 module.exports = router;
