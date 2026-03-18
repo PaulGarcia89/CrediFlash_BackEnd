@@ -41,6 +41,16 @@ const Cliente = sequelize.define('Cliente', {
     allowNull: true,
     defaultValue: 0
   },
+  descuentos_referido_disponibles: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0
+  },
+  descuentos_referido_aplicados: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0
+  },
   estado: {
     type: DataTypes.ENUM('ACTIVO', 'INACTIVO'),
     defaultValue: 'ACTIVO'

@@ -44,6 +44,43 @@ const deduplicarDocumentosPorId = (documentos = []) => {
   return Array.from(map.values());
 };
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const buscarClienteReferidor = async (referidoPor, transaction) => {
+  const valor = String(referidoPor || '').trim();
+  if (!valor) return null;
+
+  if (UUID_REGEX.test(valor)) {
+    return Cliente.findByPk(valor, { transaction });
+  }
+
+  return Cliente.findOne({
+    where: {
+      [Op.or]: [
+        { email: valor.toLowerCase() },
+        { telefono: valor },
+        { nombre: { [Op.iLike]: valor } },
+        { apellido: { [Op.iLike]: valor } }
+      ]
+    },
+    transaction
+  });
+};
+
+let clienteReferidosColumnsChecked = false;
+const ensureClienteReferidosColumns = async () => {
+  if (clienteReferidosColumnsChecked) return;
+  await sequelize.query(`
+    ALTER TABLE public.clientes
+    ADD COLUMN IF NOT EXISTS descuentos_referido_disponibles integer NOT NULL DEFAULT 0
+  `);
+  await sequelize.query(`
+    ALTER TABLE public.clientes
+    ADD COLUMN IF NOT EXISTS descuentos_referido_aplicados integer NOT NULL DEFAULT 0
+  `);
+  clienteReferidosColumnsChecked = true;
+};
+
 let tipoDocumentoColumnChecked = false;
 let tipoDocumentoColumnAvailable = false;
 
@@ -65,6 +102,7 @@ const ensureSolicitudDocumentoTipoColumn = async () => {
 // GET /api/clientes - Listar clientes con paginación
 router.get('/', authenticateToken, requirePermission('clientes.view'), async (req, res) => {
   try {
+    await ensureClienteReferidosColumns();
     const { 
       page = 1, 
       limit = 10, 
@@ -123,6 +161,8 @@ router.get('/', authenticateToken, requirePermission('clientes.view'), async (re
       es_referido: cliente.es_referido,
       referido_por: cliente.referido_por,
       monto_referido: cliente.monto_referido,
+      descuentos_referido_disponibles: cliente.descuentos_referido_disponibles,
+      descuentos_referido_aplicados: cliente.descuentos_referido_aplicados,
       estado: cliente.estado,
       observaciones: cliente.observaciones
     }));
@@ -142,6 +182,8 @@ router.get('/', authenticateToken, requirePermission('clientes.view'), async (re
           { key: 'es_referido', label: 'es_referido' },
           { key: 'referido_por', label: 'referido_por' },
           { key: 'monto_referido', label: 'monto_referido' },
+          { key: 'descuentos_referido_disponibles', label: 'descuentos_referido_disponibles' },
+          { key: 'descuentos_referido_aplicados', label: 'descuentos_referido_aplicados' },
           { key: 'estado', label: 'estado' },
           { key: 'observaciones', label: 'observaciones' }
         ],
@@ -347,6 +389,7 @@ router.post('/verificacion-email/verificar', async (req, res) => {
 // GET /api/clientes/:id - Obtener cliente por ID
 router.get('/:id', authenticateToken, requirePermission('clientes.view'), async (req, res) => {
   try {
+    await ensureClienteReferidosColumns();
     const cliente = await Cliente.findByPk(req.params.id);
     
     if (!cliente) {
@@ -488,6 +531,7 @@ router.get('/:id/prestamos', authenticateToken, requirePermission('prestamos.vie
 // POST /api/clientes - Crear cliente
 router.post('/', authenticateToken, requirePermission('clientes.create'), async (req, res) => {
   try {
+    await ensureClienteReferidosColumns();
     const { 
       nombre, 
       apellido, 
@@ -548,23 +592,38 @@ router.post('/', authenticateToken, requirePermission('clientes.create'), async 
       });
     }
 
-    const cliente = await Cliente.create({
-      nombre,
-      apellido,
-      telefono,
-      email: emailNormalizado,
-      direccion,
-      nombre_contacto,
-      apellido_contacto,
-      telefono_contacto,
-      email_contacto,
-      direccion_contacto,
-      es_referido: referidoFlag,
-      referido_por: referido_por || null,
-      monto_referido: parseFloat(montoReferidoNumero.toFixed(2)),
-      estado: estado || 'ACTIVO',
-      observaciones,
-      fecha_registro: new Date()
+    const cliente = await sequelize.transaction(async (transaction) => {
+      const nuevoCliente = await Cliente.create({
+        nombre,
+        apellido,
+        telefono,
+        email: emailNormalizado,
+        direccion,
+        nombre_contacto,
+        apellido_contacto,
+        telefono_contacto,
+        email_contacto,
+        direccion_contacto,
+        es_referido: referidoFlag,
+        referido_por: referido_por || null,
+        monto_referido: parseFloat(montoReferidoNumero.toFixed(2)),
+        descuentos_referido_disponibles: referidoFlag && montoReferidoNumero > 0 ? 1 : 0,
+        descuentos_referido_aplicados: 0,
+        estado: estado || 'ACTIVO',
+        observaciones,
+        fecha_registro: new Date()
+      }, { transaction });
+
+      if (referido_por) {
+        const referidor = await buscarClienteReferidor(referido_por, transaction);
+        if (referidor && referidor.id !== nuevoCliente.id) {
+          await referidor.update({
+            descuentos_referido_disponibles: (parseInt(referidor.descuentos_referido_disponibles, 10) || 0) + 1
+          }, { transaction });
+        }
+      }
+
+      return nuevoCliente;
     });
 
     if (emailNormalizado) {
@@ -600,6 +659,7 @@ router.post('/', authenticateToken, requirePermission('clientes.create'), async 
 // PUT /api/clientes/:id - Actualizar cliente
 router.put('/:id', authenticateToken, requirePermission('clientes.edit'), async (req, res) => {
   try {
+    await ensureClienteReferidosColumns();
     const cliente = await Cliente.findByPk(req.params.id);
     
     if (!cliente) {
@@ -614,7 +674,8 @@ router.put('/:id', authenticateToken, requirePermission('clientes.edit'), async 
       'nombre', 'apellido', 'telefono', 'email', 'direccion',
       'nombre_contacto', 'apellido_contacto', 'telefono_contacto',
       'email_contacto', 'direccion_contacto', 'es_referido',
-      'referido_por', 'monto_referido', 'estado', 'observaciones'
+      'referido_por', 'monto_referido', 'descuentos_referido_disponibles',
+      'descuentos_referido_aplicados', 'estado', 'observaciones'
     ];
 
     // Solo actualizar campos permitidos que estén presentes en el body
@@ -633,6 +694,28 @@ router.put('/:id', authenticateToken, requirePermission('clientes.edit'), async 
         });
       }
       updates.monto_referido = parseFloat(montoReferidoNumero.toFixed(2));
+    }
+
+    if (updates.descuentos_referido_disponibles !== undefined) {
+      const valor = parseInt(updates.descuentos_referido_disponibles, 10);
+      if (!Number.isFinite(valor) || valor < 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'descuentos_referido_disponibles debe ser mayor o igual a 0'
+        });
+      }
+      updates.descuentos_referido_disponibles = valor;
+    }
+
+    if (updates.descuentos_referido_aplicados !== undefined) {
+      const valor = parseInt(updates.descuentos_referido_aplicados, 10);
+      if (!Number.isFinite(valor) || valor < 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'descuentos_referido_aplicados debe ser mayor o igual a 0'
+        });
+      }
+      updates.descuentos_referido_aplicados = valor;
     }
 
     if (updates.es_referido !== undefined) {

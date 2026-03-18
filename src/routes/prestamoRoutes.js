@@ -214,6 +214,29 @@ const ensurePrestamoContratoColumn = async () => {
   return true;
 };
 
+let clienteReferidosColumnsChecked = false;
+let clienteReferidosColumnsReady = false;
+
+const ensureClienteReferidosColumns = async () => {
+  if (clienteReferidosColumnsChecked) {
+    return clienteReferidosColumnsReady;
+  }
+
+  await sequelize.query(`
+    ALTER TABLE public.clientes
+    ADD COLUMN IF NOT EXISTS descuentos_referido_disponibles integer NOT NULL DEFAULT 0
+  `);
+
+  await sequelize.query(`
+    ALTER TABLE public.clientes
+    ADD COLUMN IF NOT EXISTS descuentos_referido_aplicados integer NOT NULL DEFAULT 0
+  `);
+
+  clienteReferidosColumnsChecked = true;
+  clienteReferidosColumnsReady = true;
+  return true;
+};
+
 // GET /api/prestamos - Obtener todos los préstamos (paginado y filtrado)
 router.get('/', authenticateToken, requirePermission('prestamos.view'), async (req, res) => {
   try {
@@ -455,6 +478,7 @@ router.post(
     const resultado = await sequelize.transaction(async (transaction) => {
       await ensureSolicitudDocumentoSchema();
       await ensurePrestamoContratoColumn();
+      await ensureClienteReferidosColumns();
       const solicitud = await Solicitud.findByPk(solicitudId, {
         transaction
       });
@@ -560,6 +584,42 @@ router.post(
         cuotasGeneradas = planCuotas.length;
       }
 
+      let descuentoReferidoAplicado = 0;
+      const montoReferidoCliente = parseFloat(cliente.monto_referido || 0);
+      const descuentosDisponibles = parseInt(cliente.descuentos_referido_disponibles, 10) || 0;
+      if (montoReferidoCliente > 0 && descuentosDisponibles > 0) {
+        const ultimaCuota = await Cuota.findOne({
+          where: { prestamo_id: prestamo.id },
+          order: [['fecha_vencimiento', 'DESC']],
+          transaction
+        });
+
+        if (ultimaCuota) {
+          const montoUltimaCuota = parseFloat(ultimaCuota.monto_total || 0);
+          descuentoReferidoAplicado = parseFloat(Math.min(montoReferidoCliente, montoUltimaCuota).toFixed(2));
+
+          if (descuentoReferidoAplicado > 0) {
+            ultimaCuota.monto_total = parseFloat((montoUltimaCuota - descuentoReferidoAplicado).toFixed(2));
+            ultimaCuota.observaciones = ultimaCuota.observaciones
+              ? `${ultimaCuota.observaciones}\nDescuento referido aplicado: -${descuentoReferidoAplicado.toFixed(2)} USD`
+              : `Descuento referido aplicado: -${descuentoReferidoAplicado.toFixed(2)} USD`;
+            await ultimaCuota.save({ transaction });
+
+            await prestamo.update({
+              total_pagar: parseFloat((parseFloat(prestamo.total_pagar || 0) - descuentoReferidoAplicado).toFixed(2)),
+              ganancias: parseFloat((parseFloat(prestamo.ganancias || 0) - descuentoReferidoAplicado).toFixed(2)),
+              pendiente: parseFloat((parseFloat(prestamo.pendiente || 0) - descuentoReferidoAplicado).toFixed(2)),
+              pagos_pendientes: parseFloat((parseFloat(prestamo.pagos_pendientes || 0) - descuentoReferidoAplicado).toFixed(2))
+            }, { transaction });
+
+            await cliente.update({
+              descuentos_referido_disponibles: Math.max(descuentosDisponibles - 1, 0),
+              descuentos_referido_aplicados: (parseInt(cliente.descuentos_referido_aplicados, 10) || 0) + 1
+            }, { transaction });
+          }
+        }
+      }
+
       const contrato = await SolicitudDocumento.create({
         solicitud_id: solicitud.id,
         prestamo_id: prestamo.id,
@@ -579,6 +639,7 @@ router.post(
           data: {
             prestamo,
             cuotas_generadas: cuotasGeneradas,
+            descuento_referido_aplicado: descuentoReferidoAplicado,
             contrato_credito_id: contrato.id,
             contrato: {
               id: contrato.id,
