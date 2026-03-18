@@ -36,6 +36,27 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
 
     const round2 = (value) => Number(parseNumber(value, 0).toFixed(2));
 
+    const normalizarTiempoTrabajoMeses = (body) => {
+      const candidatos = [
+        body.tiempoTrabajo,
+        body.tiempo_trabajo,
+        body.antiguedadLaboralMeses
+      ];
+
+      for (const raw of candidatos) {
+        if (raw === undefined || raw === null || String(raw).trim() === '') {
+          continue;
+        }
+        const numeric = Number(raw);
+        if (!Number.isFinite(numeric) || numeric < 0) {
+          return { error: 'tiempoTrabajo debe ser un número mayor o igual a 0' };
+        }
+        return { value: numeric };
+      }
+
+      return { value: 0 };
+    };
+
     const {
       edad,
       sexo,
@@ -60,6 +81,14 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
       valorGarantia = req.body.valor_garantia
     } = req.body;
 
+    const tiempoTrabajoNormalizado = normalizarTiempoTrabajoMeses(req.body);
+    if (tiempoTrabajoNormalizado.error) {
+      return res.status(400).json({
+        success: false,
+        message: tiempoTrabajoNormalizado.error
+      });
+    }
+
     const edadNum = parseNumber(edad, NaN);
     const tiempoSemanasNum = parseNumber(tiempoSemanas, NaN);
     const montoSolicitadoNum = parseNumber(montoSolicitado, NaN);
@@ -67,7 +96,7 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
     const egresosMensualesNum = parseNumber(egresosMensuales, 0);
     const otrasDeudasMensualesNum = parseNumber(otrasDeudasMensuales, 0);
     const antiguedadLaboralMesesNum = parseNumber(antiguedadLaboralMeses, 0);
-    const tiempoTrabajoMesesNum = parseNumber(tiempoTrabajo, 0);
+    const tiempoTrabajoMesesNum = tiempoTrabajoNormalizado.value;
     const montoAutoNum = parseNumber(montoAuto, 0);
     const pagoAutoNum = parseNumber(pagoAuto, 0);
     const gastosMensualesEstimadosNum = parseNumber(gastosMensualesEstimados, 0);
@@ -80,7 +109,7 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
     const statusLegalNorm = String(statusLegal || 'NO_ESPECIFICADO').trim().toUpperCase();
     const viviendaNorm = String(casaPropiaAlquiler || 'NO_ESPECIFICADO').trim().toUpperCase();
     const montoGarantiaEfectivo = valorGarantiaNum > 0 ? valorGarantiaNum : montoGarantiaNum;
-    const tiempoLaboralEfectivoMeses = Math.max(tiempoTrabajoMesesNum, antiguedadLaboralMesesNum);
+    const tiempoLaboralEfectivoMeses = tiempoTrabajoMesesNum;
 
     // Validaciones básicas
     if (!Number.isFinite(edadNum) || !sexo || !Number.isFinite(tiempoSemanasNum) || !Number.isFinite(montoSolicitadoNum) || !Number.isFinite(ingresosMensualesNum)) {
