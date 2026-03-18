@@ -20,6 +20,22 @@ const { authenticateToken, requirePermission } = require('../middleware/auth');
  */
 router.post('/new-client', authenticateToken, requirePermission('ratings.run'), (req, res) => {
   try {
+    const parseBoolean = (value) => {
+      if (typeof value === 'boolean') return value;
+      if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        return ['true', '1', 'si', 'sí'].includes(normalized);
+      }
+      return Boolean(value);
+    };
+
+    const parseNumber = (value, fallback = 0) => {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? numeric : fallback;
+    };
+
+    const round2 = (value) => Number(parseNumber(value, 0).toFixed(2));
+
     const {
       edad,
       sexo,
@@ -33,11 +49,41 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
       egresosMensuales = 0,
       otrasDeudasMensuales = 0,
       antiguedadLaboralMeses = 0,
-      documentosCompletos = false
+      documentosCompletos = false,
+      statusLegal = req.body.status_legal,
+      tiempoTrabajo = req.body.tiempo_trabajo,
+      casaPropiaAlquiler = req.body.casa_propia_alquiler,
+      montoAuto = req.body.monto_auto,
+      pagoAuto = req.body.pago_auto,
+      gastosMensualesEstimados = req.body.estimados_gastos_mensuales,
+      deudasActualesPagosMinimos = req.body.deudas_actuales_pagos_minimos,
+      valorGarantia = req.body.valor_garantia
     } = req.body;
 
+    const edadNum = parseNumber(edad, NaN);
+    const tiempoSemanasNum = parseNumber(tiempoSemanas, NaN);
+    const montoSolicitadoNum = parseNumber(montoSolicitado, NaN);
+    const ingresosMensualesNum = parseNumber(ingresosMensuales, NaN);
+    const egresosMensualesNum = parseNumber(egresosMensuales, 0);
+    const otrasDeudasMensualesNum = parseNumber(otrasDeudasMensuales, 0);
+    const antiguedadLaboralMesesNum = parseNumber(antiguedadLaboralMeses, 0);
+    const tiempoTrabajoMesesNum = parseNumber(tiempoTrabajo, 0);
+    const montoAutoNum = parseNumber(montoAuto, 0);
+    const pagoAutoNum = parseNumber(pagoAuto, 0);
+    const gastosMensualesEstimadosNum = parseNumber(gastosMensualesEstimados, 0);
+    const deudasActualesPagosMinimosNum = parseNumber(deudasActualesPagosMinimos, 0);
+    const montoGarantiaNum = parseNumber(montoGarantia, 0);
+    const valorGarantiaNum = parseNumber(valorGarantia, 0);
+    const esReferidoBool = parseBoolean(esReferido);
+    const tieneGarantiaBool = parseBoolean(tieneGarantia);
+    const documentosCompletosBool = parseBoolean(documentosCompletos);
+    const statusLegalNorm = String(statusLegal || 'NO_ESPECIFICADO').trim().toUpperCase();
+    const viviendaNorm = String(casaPropiaAlquiler || 'NO_ESPECIFICADO').trim().toUpperCase();
+    const montoGarantiaEfectivo = valorGarantiaNum > 0 ? valorGarantiaNum : montoGarantiaNum;
+    const tiempoLaboralEfectivoMeses = Math.max(tiempoTrabajoMesesNum, antiguedadLaboralMesesNum);
+
     // Validaciones básicas
-    if (!edad || !sexo || !tiempoSemanas || !montoSolicitado || !ingresosMensuales) {
+    if (!Number.isFinite(edadNum) || !sexo || !Number.isFinite(tiempoSemanasNum) || !Number.isFinite(montoSolicitadoNum) || !Number.isFinite(ingresosMensualesNum)) {
       return res.status(400).json({
         success: false,
         message: 'Faltan campos requeridos: edad, sexo, tiempoSemanas (plazo), montoSolicitado, ingresosMensuales'
@@ -47,7 +93,7 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
     // VALIDACIONES DETALLADAS
     const errores = [];
     
-    if (edad < 18 || edad > 80) {
+    if (edadNum < 18 || edadNum > 80) {
       errores.push('La edad debe estar entre 18 y 80 años');
     }
 
@@ -55,19 +101,19 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
       errores.push('El sexo debe ser "M" (masculino) o "F" (femenino)');
     }
 
-    if (tiempoSemanas < 4 || tiempoSemanas > 208) {
+    if (tiempoSemanasNum < 4 || tiempoSemanasNum > 208) {
       errores.push('El plazo del préstamo debe estar entre 4 semanas (1 mes) y 208 semanas (4 años)');
     }
 
-    if (montoSolicitado <= 0) {
+    if (montoSolicitadoNum <= 0) {
       errores.push('El monto solicitado debe ser mayor a 0');
     }
 
-    if (ingresosMensuales <= 0) {
+    if (ingresosMensualesNum <= 0) {
       errores.push('Los ingresos mensuales deben ser mayores a 0');
     }
 
-    if (tieneGarantia && montoGarantia < 0) {
+    if (tieneGarantiaBool && montoGarantiaEfectivo < 0) {
       errores.push('El monto de la garantía no puede ser negativo');
     }
 
@@ -88,19 +134,19 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
     let edadCategoria = '';
     let edadExplicacion = '';
     
-    if (edad >= 25 && edad <= 50) {
+    if (edadNum >= 25 && edadNum <= 50) {
       edadScore = 15;
       edadCategoria = 'ÓPTIMA';
       edadExplicacion = 'Edad con mayor estabilidad laboral y financiera';
-    } else if ((edad >= 20 && edad < 25) || (edad > 50 && edad <= 60)) {
+    } else if ((edadNum >= 20 && edadNum < 25) || (edadNum > 50 && edadNum <= 60)) {
       edadScore = 10;
       edadCategoria = 'ACEPTABLE';
-      edadExplicacion = edad < 25 ? 'Adulto joven con potencial crecimiento' : 'Adulto mayor con experiencia';
-    } else if (edad >= 18 && edad < 20) {
+      edadExplicacion = edadNum < 25 ? 'Adulto joven con potencial crecimiento' : 'Adulto mayor con experiencia';
+    } else if (edadNum >= 18 && edadNum < 20) {
       edadScore = 5;
       edadCategoria = 'JOVEN';
       edadExplicacion = 'Mayoría de edad reciente, experiencia limitada';
-    } else if (edad > 60) {
+    } else if (edadNum > 60) {
       edadScore = 3;
       edadCategoria = 'ADULTO MAYOR';
       edadExplicacion = 'Mayor edad, posible proximidad a retiro';
@@ -109,7 +155,7 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
     score += edadScore;
     calculosDetallados.push({
       factor: 'EDAD',
-      valor: edad,
+      valor: edadNum,
       categoria: edadCategoria,
       puntos: edadScore,
       maxPuntos: 15,
@@ -138,10 +184,10 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
     let plazoCategoria = '';
     let plazoExplicacion = '';
     
-    const plazoMeses = tiempoSemanas / 4.33; // Convertir semanas a meses
+    const plazoMeses = tiempoSemanasNum / 4.33; // Convertir semanas a meses
     
     // Evaluación del plazo solicitado vs plazo recomendado
-    const plazoRecomendadoMeses = (montoSolicitado / (ingresosMensuales * 0.3)); // 30% de ingresos
+    const plazoRecomendadoMeses = (montoSolicitadoNum / (ingresosMensualesNum * 0.3)); // 30% de ingresos
     
     if (plazoMeses <= plazoRecomendadoMeses) {
       // Plazo adecuado o menor al recomendado
@@ -178,7 +224,7 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
     score += plazoScore;
     calculosDetallados.push({
       factor: 'PLAZO PRÉSTAMO',
-      valor: `${tiempoSemanas} semanas (${plazoMeses.toFixed(1)} meses)`,
+      valor: `${tiempoSemanasNum} semanas (${plazoMeses.toFixed(1)} meses)`,
       categoria: plazoCategoria,
       puntos: plazoScore,
       maxPuntos: 15,
@@ -238,19 +284,19 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
     });
 
     // 5. FACTOR REFERIDO (0-5 puntos)
-    let referidoScore = esReferido ? 5 : 0;
-    let referidoExplicacion = esReferido 
+    let referidoScore = esReferidoBool ? 5 : 0;
+    let referidoExplicacion = esReferidoBool
       ? 'Cliente referido por cliente existente - mayor confianza' 
       : 'Cliente no referido - evaluación estándar';
     
     score += referidoScore;
     calculosDetallados.push({
       factor: 'REFERIDO',
-      valor: esReferido ? 'SÍ' : 'NO',
+      valor: esReferidoBool ? 'SÍ' : 'NO',
       puntos: referidoScore,
       maxPuntos: 5,
       explicacion: referidoExplicacion,
-      impacto: esReferido ? 'POSITIVO' : 'NEUTRO',
+      impacto: esReferidoBool ? 'POSITIVO' : 'NEUTRO',
       porcentaje: `${((referidoScore / 5) * 100).toFixed(1)}%`
     });
 
@@ -260,8 +306,8 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
     let garantiaExplicacion = '';
     let relacionGarantia = 0;
     
-    if (tieneGarantia && montoGarantia > 0) {
-      relacionGarantia = (montoGarantia / montoSolicitado) * 100;
+    if (tieneGarantiaBool && montoGarantiaEfectivo > 0) {
+      relacionGarantia = (montoGarantiaEfectivo / montoSolicitadoNum) * 100;
       
       if (relacionGarantia >= 150) {
         garantiaScore = 20;
@@ -289,7 +335,7 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
     score += garantiaScore;
     calculosDetallados.push({
       factor: 'GARANTÍA',
-      valor: tieneGarantia ? `$${montoGarantia.toLocaleString()}` : 'NO',
+      valor: tieneGarantiaBool ? `$${montoGarantiaEfectivo.toLocaleString()}` : 'NO',
       categoria: garantiaCategoria,
       puntos: garantiaScore,
       maxPuntos: 20,
@@ -301,10 +347,35 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
       porcentaje: `${((garantiaScore / 20) * 100).toFixed(1)}%`
     });
 
-    // 7. FACTOR CAPACIDAD DE PAGO (0-20 puntos) - ANÁLISIS DETALLADO CON PLAZO
-    const pagoSemanalEstimado = tiempoSemanas > 0 ? (montoSolicitado / tiempoSemanas) : 0;
-    const ingresosSemanales = ingresosMensuales / 4.333;
-    const capacidadPago = pagoSemanalEstimado > 0 ? (ingresosSemanales / pagoSemanalEstimado) * 100 : 0;
+    // 7. FACTOR CAPACIDAD DE PAGO (0-20 puntos) - ANÁLISIS DETALLADO CON VARIABLES NUEVAS
+    const pagoSemanalEstimado = tiempoSemanasNum > 0 ? (montoSolicitadoNum / tiempoSemanasNum) : 0;
+    const ingresosSemanales = ingresosMensualesNum / 4.333;
+    const egresosBaseMensuales = egresosMensualesNum + otrasDeudasMensualesNum + gastosMensualesEstimadosNum + deudasActualesPagosMinimosNum + pagoAutoNum;
+    const ingresoDisponibleMensualBase = Math.max(ingresosMensualesNum - egresosBaseMensuales, 0);
+
+    const factorStatusLegal = {
+      FORMAL: 1.0,
+      EN_REGLA: 1.0,
+      RESIDENTE: 0.9,
+      TEMPORAL: 0.8,
+      IRREGULAR: 0.65,
+      NO_ESPECIFICADO: 0.85
+    }[statusLegalNorm] || 0.85;
+
+    const factorEstabilidadLaboral = tiempoLaboralEfectivoMeses >= 24
+      ? 1.0
+      : tiempoLaboralEfectivoMeses >= 12
+        ? 0.9
+        : tiempoLaboralEfectivoMeses >= 6
+          ? 0.75
+          : 0.6;
+
+    const factorVivienda = viviendaNorm === 'PROPIA' ? 1.0 : viviendaNorm === 'ALQUILER' ? 0.9 : 0.95;
+
+    const capacidadPagoMensual = round2(ingresoDisponibleMensualBase * 0.35 * factorStatusLegal * factorEstabilidadLaboral * factorVivienda);
+    const capacidadPagoSemanalMonto = round2(capacidadPagoMensual / 4.333);
+    const coberturaCuotaPct = pagoSemanalEstimado > 0 ? (capacidadPagoSemanalMonto / pagoSemanalEstimado) * 100 : 0;
+    const capacidadPago = coberturaCuotaPct;
     let capacidadScore = 0;
     let capacidadCategoria = '';
     let capacidadExplicacion = '';
@@ -312,30 +383,30 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
     if (capacidadPago >= 200) {
       capacidadScore = 20;
       capacidadCategoria = 'CAPACIDAD EXCELENTE';
-      capacidadExplicacion = 'Ingresos cubren más del 200% del pago mensual - riesgo muy bajo';
+      capacidadExplicacion = 'La capacidad semanal estimada cubre más del 200% de la cuota semanal';
     } else if (capacidadPago >= 150) {
       capacidadScore = 15;
       capacidadCategoria = 'CAPACIDAD SOBRESALIENTE';
-      capacidadExplicacion = 'Ingresos cubren 150-200% del pago mensual - riesgo bajo';
+      capacidadExplicacion = 'La capacidad semanal estimada cubre entre 150% y 200% de la cuota semanal';
     } else if (capacidadPago >= 100) {
       capacidadScore = 10;
       capacidadCategoria = 'CAPACIDAD ADECUADA';
-      capacidadExplicacion = 'Ingresos cubren 100-150% del pago mensual - riesgo moderado';
+      capacidadExplicacion = 'La capacidad semanal estimada cubre entre 100% y 150% de la cuota semanal';
     } else if (capacidadPago >= 50) {
       capacidadScore = 5;
       capacidadCategoria = 'CAPACIDAD LIMITADA';
-      capacidadExplicacion = 'Ingresos cubren 50-100% del pago mensual - riesgo alto';
+      capacidadExplicacion = 'La capacidad semanal estimada cubre entre 50% y 100% de la cuota semanal';
     } else {
       capacidadScore = 0;
       capacidadCategoria = 'CAPACIDAD INSUFICIENTE';
-      capacidadExplicacion = 'Ingresos cubren menos del 50% del pago mensual - riesgo muy alto';
+      capacidadExplicacion = 'La capacidad semanal estimada cubre menos del 50% de la cuota semanal';
     }
     
     score += capacidadScore;
     
     calculosDetallados.push({
       factor: 'CAPACIDAD DE PAGO',
-      valor: `$${ingresosMensuales.toLocaleString()} mensuales`,
+      valor: `$${ingresosMensualesNum.toLocaleString()} mensuales`,
       categoria: capacidadCategoria,
       puntos: capacidadScore,
       maxPuntos: 20,
@@ -343,9 +414,16 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
       analisis: {
         ingresosSemanales: `$${ingresosSemanales.toLocaleString()}`,
         pagoSemanalEstimado: `$${pagoSemanalEstimado.toLocaleString()}`,
-        relacionPagoIngresos: `${(pagoSemanalEstimado > 0 ? (pagoSemanalEstimado / ingresosSemanales) * 100 : 0).toFixed(1)}%`,
-        plazoSolicitado: `${tiempoSemanas} semanas`,
-        cuotaRecomendada: `$${(ingresosSemanales * 0.3).toLocaleString()} (30% de ingresos semanales)`
+        relacionPagoIngresos: `${(pagoSemanalEstimado > 0 ? (pagoSemanalEstimado / Math.max(capacidadPagoSemanalMonto, 1)) * 100 : 0).toFixed(1)}%`,
+        plazoSolicitado: `${tiempoSemanasNum} semanas`,
+        cuotaRecomendada: `$${capacidadPagoSemanalMonto.toLocaleString()} (capacidad semanal estimada)`,
+        capacidadPagoMensual: `$${capacidadPagoMensual.toLocaleString()}`,
+        ingresoDisponibleMensualBase: `$${ingresoDisponibleMensualBase.toLocaleString()}`,
+        ajusteStatusLegal: factorStatusLegal,
+        ajusteTiempoTrabajo: factorEstabilidadLaboral,
+        ajusteVivienda: factorVivienda,
+        montoAuto: `$${montoAutoNum.toLocaleString()}`,
+        pagoAuto: `$${pagoAutoNum.toLocaleString()}`
       },
       explicacion: capacidadExplicacion,
       porcentaje: `${((capacidadScore / 20) * 100).toFixed(1)}%`
@@ -357,18 +435,18 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
     let congruenciaExplicacion = '';
     
     // Evaluar si el monto y plazo son congruentes
-    const montoPorMes = montoSolicitado / plazoMeses;
+    const montoPorMes = montoSolicitadoNum / plazoMeses;
     const ingresoPorMesRecomendado = montoPorMes * 3; // Debería ser máximo 1/3 de ingresos
     
-    if (ingresoPorMesRecomendado <= ingresosMensuales) {
+    if (ingresoPorMesRecomendado <= ingresosMensualesNum) {
       congruenciaScore = 10;
       congruenciaCategoria = 'CONGRUENCIA ÓPTIMA';
       congruenciaExplicacion = 'Monto y plazo son proporcionales a ingresos';
-    } else if (ingresoPorMesRecomendado <= ingresosMensuales * 1.5) {
+    } else if (ingresoPorMesRecomendado <= ingresosMensualesNum * 1.5) {
       congruenciaScore = 7;
       congruenciaCategoria = 'CONGRUENCIA ACEPTABLE';
       congruenciaExplicacion = 'Monto y plazo son aceptables para ingresos';
-    } else if (ingresoPorMesRecomendado <= ingresosMensuales * 2) {
+    } else if (ingresoPorMesRecomendado <= ingresosMensualesNum * 2) {
       congruenciaScore = 3;
       congruenciaCategoria = 'CONGRUENCIA LIMITADA';
       congruenciaExplicacion = 'Monto o plazo podrían estar sobrestimados';
@@ -381,7 +459,7 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
     score += congruenciaScore;
     calculosDetallados.push({
       factor: 'CONGRUENCIA MONTO-PLAZO',
-      valor: `$${montoSolicitado.toLocaleString()} / ${plazoMeses.toFixed(1)} meses`,
+      valor: `$${montoSolicitadoNum.toLocaleString()} / ${plazoMeses.toFixed(1)} meses`,
       categoria: congruenciaCategoria,
       puntos: congruenciaScore,
       maxPuntos: 10,
@@ -416,7 +494,7 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
 
     // ANÁLISIS DE RATIOS FINANCIEROS
     const ratiosFinancieros = {
-      deudaIngreso: ((montoSolicitado / ingresosMensuales) * 100).toFixed(1) + '%',
+      deudaIngreso: ((montoSolicitadoNum / ingresosMensualesNum) * 100).toFixed(1) + '%',
       garantiaDeuda: relacionGarantia.toFixed(1) + '%',
       capacidadEndeudamiento: capacidadPago.toFixed(1) + '%',
       relacionCuotaIngreso: ((pagoSemanalEstimado / ingresosSemanales) * 100).toFixed(1) + '%',
@@ -428,13 +506,13 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
     let aprobado = false;
     let montoAprobado = 0;
     let tasaInteres = 0;
-    let plazoAprobado = tiempoSemanas;
+    let plazoAprobado = tiempoSemanasNum;
     let condicionesAprobacion = [];
 
     if (score >= 80) {
       calificacion = 'EXCELENTE';
       aprobado = true;
-      montoAprobado = montoSolicitado;
+      montoAprobado = montoSolicitadoNum;
       tasaInteres = 8.5;
       condicionesAprobacion = [
         'Aprobación inmediata',
@@ -445,14 +523,14 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
     } else if (score >= 65) {
       calificacion = 'BUENO';
       aprobado = true;
-      montoAprobado = montoSolicitado * 0.85;
+      montoAprobado = montoSolicitadoNum * 0.85;
       // Reducir plazo si es muy largo
       if (plazoMeses > plazoRecomendadoMeses * 1.2) {
-        plazoAprobado = Math.min(tiempoSemanas, Math.floor(plazoRecomendadoMeses * 1.2 * 4.33));
+        plazoAprobado = Math.min(tiempoSemanasNum, Math.floor(plazoRecomendadoMeses * 1.2 * 4.33));
       }
       tasaInteres = 12.5;
       condicionesAprobacion = [
-        `Aprobación del ${((montoAprobado / montoSolicitado) * 100).toFixed(0)}% del monto solicitado`,
+        `Aprobación del ${((montoAprobado / montoSolicitadoNum) * 100).toFixed(0)}% del monto solicitado`,
         `Plazo ajustado a ${Math.floor(plazoAprobado / 4.33)} meses`,
         'Revisión de documentación adicional',
         'Tasa estándar del 12.5% anual'
@@ -460,12 +538,12 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
     } else if (score >= 50) {
       calificacion = 'REGULAR';
       aprobado = true;
-      montoAprobado = montoSolicitado * 0.70;
+      montoAprobado = montoSolicitadoNum * 0.70;
       // Reducir plazo significativamente
-      plazoAprobado = Math.min(tiempoSemanas, Math.floor(plazoRecomendadoMeses * 4.33));
+      plazoAprobado = Math.min(tiempoSemanasNum, Math.floor(plazoRecomendadoMeses * 4.33));
       tasaInteres = 16.0;
       condicionesAprobacion = [
-        `Aprobación limitada al ${((montoAprobado / montoSolicitado) * 100).toFixed(0)}% del monto`,
+        `Aprobación limitada al ${((montoAprobado / montoSolicitadoNum) * 100).toFixed(0)}% del monto`,
         `Plazo reducido a ${Math.floor(plazoAprobado / 4.33)} meses`,
         'Garantía adicional requerida',
         'Tasa elevada del 16.0% anual'
@@ -473,12 +551,12 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
     } else if (score >= 35) {
       calificacion = 'BAJO';
       aprobado = false;
-      montoAprobado = montoSolicitado * 0.50;
+      montoAprobado = montoSolicitadoNum * 0.50;
       plazoAprobado = Math.floor(Math.min(plazoRecomendadoMeses, 6) * 4.33); // Máximo 6 meses
       tasaInteres = 20.0;
       condicionesAprobacion = [
         'NO APROBADO - Perfil de riesgo alto',
-        `Oferta alternativa: ${((montoAprobado / montoSolicitado) * 100).toFixed(0)}% del monto en ${Math.floor(plazoAprobado / 4.33)} meses`,
+        `Oferta alternativa: ${((montoAprobado / montoSolicitadoNum) * 100).toFixed(0)}% del monto en ${Math.floor(plazoAprobado / 4.33)} meses`,
         'Garantía real requerida (propiedad o vehículo)',
         'Tasa máxima del 20.0% anual'
       ];
@@ -512,11 +590,11 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
     // RESPUESTA FINTECH-GRADE
     const timestamp = new Date().toISOString();
     const requestId = `ANL-NEW-${Date.now()}`;
-    const ingresoDisponible = ingresosMensuales - egresosMensuales - otrasDeudasMensuales;
-    const ratioGarantia = montoSolicitado > 0 ? (montoGarantia || 0) / montoSolicitado : 0;
-    const montoVsIngreso = ingresosMensuales > 0 ? montoSolicitado / ingresosMensuales : 0;
-    const cuotaEstimadaSemanal = tiempoSemanas > 0 ? montoSolicitado / tiempoSemanas : 0;
-    const ratioCuotaIngresoSemanal = ingresosMensuales > 0 ? cuotaEstimadaSemanal / ingresosSemanales : 0;
+    const ingresoDisponible = ingresosMensualesNum - egresosMensualesNum - otrasDeudasMensualesNum;
+    const ratioGarantia = montoSolicitadoNum > 0 ? (montoGarantiaEfectivo || 0) / montoSolicitadoNum : 0;
+    const montoVsIngreso = ingresosMensualesNum > 0 ? montoSolicitadoNum / ingresosMensualesNum : 0;
+    const cuotaEstimadaSemanal = tiempoSemanasNum > 0 ? montoSolicitadoNum / tiempoSemanasNum : 0;
+    const ratioCuotaIngresoSemanal = ingresosSemanales > 0 ? cuotaEstimadaSemanal / ingresosSemanales : 0;
 
     const decision = score >= 75 ? 'APROBADO' : score >= 60 ? 'APROBADO_CONDICIONES' : 'RECHAZADO';
     const aprobadoFinal = score >= 60;
@@ -529,24 +607,34 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
         decision,
         aprobado: aprobadoFinal,
         riesgoTotal: riesgoTotalFinal,
-        montoSolicitado
+        montoSolicitado: montoSolicitadoNum,
+        capacidadPagoMensual: capacidadPagoMensual,
+        capacidadPagoSemanal: capacidadPagoSemanalMonto
       },
       inputsNormalizados: {
-        edad,
+        edad: edadNum,
         sexo: sexo.toUpperCase(),
-        plazoSemanas: tiempoSemanas,
+        plazoSemanas: tiempoSemanasNum,
         objetivoPrestamo: objetivoPrestamo.toUpperCase(),
-        referido: !!esReferido,
+        referido: !!esReferidoBool,
         garantia: {
-          tiene: !!tieneGarantia,
-          valor: montoGarantia || 0
+          tiene: !!tieneGarantiaBool,
+          valor: montoGarantiaEfectivo || 0
         },
-        montoSolicitado,
-        ingresosMensuales,
-        egresosMensuales,
-        otrasDeudasMensuales,
-        antiguedadLaboralMeses,
-        documentosCompletos: !!documentosCompletos
+        montoSolicitado: montoSolicitadoNum,
+        ingresosMensuales: ingresosMensualesNum,
+        egresosMensuales: egresosMensualesNum,
+        otrasDeudasMensuales: otrasDeudasMensualesNum,
+        antiguedadLaboralMeses: antiguedadLaboralMesesNum,
+        documentosCompletos: !!documentosCompletosBool,
+        statusLegal: statusLegalNorm,
+        tiempoTrabajoMeses: tiempoLaboralEfectivoMeses,
+        vivienda: viviendaNorm,
+        montoAuto: montoAutoNum,
+        pagoAuto: pagoAutoNum,
+        gastosMensualesEstimados: gastosMensualesEstimadosNum,
+        deudasActualesPagosMinimos: deudasActualesPagosMinimosNum,
+        valorGarantia: montoGarantiaEfectivo
       },
       precalculos: {
         ingresoDisponible,
@@ -557,6 +645,11 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
           semanal: parseFloat(cuotaEstimadaSemanal.toFixed(2)),
           nota: 'Estimación para ratio cuota/ingreso; el cronograma final puede variar por modalidad'
         },
+        capacidadPago: {
+          montoMensual: capacidadPagoMensual,
+          montoSemanal: capacidadPagoSemanalMonto,
+          coberturaCuotaPct: parseFloat(coberturaCuotaPct.toFixed(2))
+        },
         ratios: {
           ratioCuotaIngresoSemanal: parseFloat(ratioCuotaIngresoSemanal.toFixed(4)),
           limiteRecomendado: 0.3
@@ -565,7 +658,7 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
           excedeRatioCuotaIngreso: ratioCuotaIngresoSemanal > 0.3,
           ingresoDisponibleBajo: ingresoDisponible < 0,
           garantiaSuficiente: ratioGarantia >= 1,
-          documentosOK: !!documentosCompletos
+          documentosOK: !!documentosCompletosBool
         }
       },
       scorecard: {
@@ -589,14 +682,14 @@ router.post('/new-client', authenticateToken, requirePermission('ratings.run'), 
       contraofertas: [
         {
           escenario: 'Reducir monto',
-          montoSugerido: Math.round(montoSolicitado * 0.7),
-          plazoSemanas: tiempoSemanas,
+          montoSugerido: Math.round(montoSolicitadoNum * 0.7),
+          plazoSemanas: tiempoSemanasNum,
           objetivo: 'Bajar ratio cuota/ingreso'
         },
         {
           escenario: 'Extender plazo',
-          monto: montoSolicitado,
-          plazoSemanas: tiempoSemanas * 2,
+          monto: montoSolicitadoNum,
+          plazoSemanas: tiempoSemanasNum * 2,
           objetivo: 'Bajar cuota mensual estimada'
         }
       ],
@@ -679,6 +772,54 @@ router.get('/new-client/variables', authenticateToken, requirePermission('rating
         tipo: 'number',
         impacto: 'Crítico',
         calculo: 'Base para capacidad de pago'
+      },
+      statusLegal: {
+        descripcion: 'Estatus legal del cliente',
+        valores: ['FORMAL', 'EN_REGLA', 'RESIDENTE', 'TEMPORAL', 'IRREGULAR'],
+        impacto: 'Alto',
+        calculo: 'Ajusta la capacidad de pago con factor de riesgo legal'
+      },
+      tiempoTrabajo: {
+        descripcion: 'Tiempo de trabajo en meses',
+        tipo: 'number',
+        impacto: 'Alto',
+        calculo: 'A mayor antigüedad laboral, mayor estabilidad'
+      },
+      casaPropiaAlquiler: {
+        descripcion: 'Tipo de vivienda',
+        valores: ['PROPIA', 'ALQUILER'],
+        impacto: 'Moderado',
+        calculo: 'Vivienda propia reduce riesgo'
+      },
+      montoAuto: {
+        descripcion: 'Valor del auto del cliente',
+        tipo: 'number',
+        impacto: 'Informativo',
+        calculo: 'Se usa como contexto patrimonial'
+      },
+      pagoAuto: {
+        descripcion: 'Pago mensual del auto',
+        tipo: 'number',
+        impacto: 'Alto',
+        calculo: 'Se descuenta del ingreso disponible mensual'
+      },
+      gastosMensualesEstimados: {
+        descripcion: 'Estimado de gastos mensuales',
+        tipo: 'number',
+        impacto: 'Crítico',
+        calculo: 'Se descuenta del ingreso disponible'
+      },
+      deudasActualesPagosMinimos: {
+        descripcion: 'Suma de pagos mínimos de deudas actuales',
+        tipo: 'number',
+        impacto: 'Crítico',
+        calculo: 'Se descuenta del ingreso disponible'
+      },
+      valorGarantia: {
+        descripcion: 'Valor de garantía declarado para capacidad de respaldo',
+        tipo: 'number',
+        impacto: 'Alto',
+        calculo: 'Se toma como prioridad frente a montoGarantia'
       }
     },
     metricas: {
