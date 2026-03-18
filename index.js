@@ -3,6 +3,7 @@ require('dotenv').config();
 const app = require('./src/app');
 
 const PORT = process.env.PORT || 5001;
+const HOST = process.env.HOST || '0.0.0.0';
 const usingDatabaseUrl = Boolean(process.env.DATABASE_URL);
 
 console.log('🚀 Iniciando API Crediflash...');
@@ -12,17 +13,17 @@ console.log('🌐 Servidor DB:', usingDatabaseUrl ? 'provisto por DATABASE_URL' 
 
 const startServer = async () => {
   try {
-    const server = app.listen(PORT, () => {
-      console.log(`✅ Servidor corriendo en http://localhost:${PORT}`);
+    const server = app.listen(PORT, HOST, () => {
+      console.log(`✅ Servidor corriendo en http://${HOST}:${PORT}`);
       console.log(`📊 Endpoints disponibles:`);
-      console.log(`   • http://localhost:${PORT}/`);
-      console.log(`   • http://localhost:${PORT}/health`);
-      console.log(`   • http://localhost:${PORT}/sync-db`);
-      console.log(`   • http://localhost:${PORT}/api/solicitudes`);
-      console.log(`   • http://localhost:${PORT}/api/clientes`);
-      console.log(`   • http://localhost:${PORT}/api/analistas`);
-      console.log(`   • http://localhost:${PORT}/api/modelos-aprobacion`);
-      console.log(`   • http://localhost:${PORT}/api/test`);
+      console.log(`   • http://${HOST}:${PORT}/`);
+      console.log(`   • http://${HOST}:${PORT}/health`);
+      console.log(`   • http://${HOST}:${PORT}/sync-db`);
+      console.log(`   • http://${HOST}:${PORT}/api/solicitudes`);
+      console.log(`   • http://${HOST}:${PORT}/api/clientes`);
+      console.log(`   • http://${HOST}:${PORT}/api/analistas`);
+      console.log(`   • http://${HOST}:${PORT}/api/modelos-aprobacion`);
+      console.log(`   • http://${HOST}:${PORT}/api/test`);
     });
     
     process.on('SIGTERM', () => {
