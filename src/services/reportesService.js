@@ -447,14 +447,17 @@ const generarMetas = async ({ start, end, meta_monto, meta_cantidad }) => {
   };
 };
 
-const generarTopMorasDiarias = async ({ start, end, top }) => {
+const generarTopMorasDiarias = async ({ top }) => {
   const today = new Date();
+  const todayDb = toDbDateString(today);
+
   const cuotas = await Cuota.findAll({
     where: {
-      fecha_vencimiento: { [Op.between]: [toDbDateString(start), toDbDateString(end)] },
+      fecha_vencimiento: { [Op.lte]: todayDb },
       estado: { [Op.in]: ['PENDIENTE', 'EN_MORA', 'PARCIAL'] }
     },
-    attributes: ['id', 'fecha_vencimiento', 'monto_total', 'monto_pagado', 'fecha_pago']
+    include: getBaseIncludes(),
+    attributes: ['id', 'prestamo_id', 'fecha_vencimiento', 'monto_total', 'monto_pagado', 'fecha_pago']
   });
 
   const grouped = new Map();
@@ -462,29 +465,49 @@ const generarTopMorasDiarias = async ({ start, end, top }) => {
     const mora = calculateMora(cuota, today);
     if (!mora) return;
 
-    const key = formatDate(cuota.fecha_vencimiento);
-    if (!grouped.has(key)) {
-      grouped.set(key, { fecha: key, cantidad_moras: 0, monto_mora: 0 });
+    const cliente = cuota?.prestamo?.solicitud?.cliente;
+    const clienteId = cliente?.id || 'N/A';
+    const nombreCompleto = cliente
+      ? `${cliente.nombre || ''} ${cliente.apellido || ''}`.trim()
+      : 'Cliente no identificado';
+
+    if (!grouped.has(clienteId)) {
+      grouped.set(clienteId, {
+        fecha_reporte: formatDate(today),
+        cliente_id: clienteId,
+        nombre_completo: nombreCompleto,
+        cantidad_cuotas_en_mora: 0,
+        monto_mora_hoy: 0,
+        dias_mora_max: 0
+      });
     }
-    const item = grouped.get(key);
-    item.cantidad_moras += 1;
-    item.monto_mora = round2(item.monto_mora + mora.saldo);
+
+    const item = grouped.get(clienteId);
+    item.cantidad_cuotas_en_mora += 1;
+    item.monto_mora_hoy = round2(item.monto_mora_hoy + mora.saldo);
+    item.dias_mora_max = Math.max(item.dias_mora_max, mora.dias);
   });
 
   const rows = Array.from(grouped.values())
-    .sort((a, b) => b.monto_mora - a.monto_mora)
+    .sort((a, b) => b.monto_mora_hoy - a.monto_mora_hoy)
     .slice(0, top);
 
   return {
     tipo: 'top-moras-diarias',
     resumen: {
-      total_dias_con_mora: rows.length,
+      fecha_reporte: formatDate(today),
+      total_clientes_en_mora: rows.length,
+      total_cuotas_en_mora: rows.reduce((acc, row) => acc + row.cantidad_cuotas_en_mora, 0),
+      monto_total_en_mora: round2(rows.reduce((acc, row) => acc + row.monto_mora_hoy, 0)),
       top
     },
     columns: [
-      { id: 'fecha', label: 'Fecha' },
-      { id: 'cantidad_moras', label: 'Cantidad moras' },
-      { id: 'monto_mora', label: 'Monto mora' }
+      { id: 'fecha_reporte', label: 'Fecha reporte' },
+      { id: 'cliente_id', label: 'Cliente ID' },
+      { id: 'nombre_completo', label: 'Cliente' },
+      { id: 'cantidad_cuotas_en_mora', label: 'Cuotas en mora' },
+      { id: 'monto_mora_hoy', label: 'Monto mora hoy' },
+      { id: 'dias_mora_max', label: 'Días mora máx' }
     ],
     rows
   };
@@ -631,7 +654,7 @@ const generarReporte = async ({ tipo, filtros, user }) => {
       meta_cantidad: filtros.meta_cantidad
     });
   } else if (tipo === 'top-moras-diarias') {
-    response = await generarTopMorasDiarias({ start, end, top });
+    response = await generarTopMorasDiarias({ top });
   } else if (tipo === 'cuotas-pendientes-correo-admin') {
     response = await generarCuotasPendientesCorreoAdmin({ start, end, adminEmail, user });
   } else {
