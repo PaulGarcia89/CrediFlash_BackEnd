@@ -1,862 +1,409 @@
-// routes/newClientRoutes.js - Con tiempoSemanas como plazo del préstamo
 const express = require('express');
 const router = express.Router();
 const { authenticateToken, requirePermission } = require('../middleware/auth');
 
-/**
- * @route POST /api/ratings/new-client
- * @description Calcula el score de un nuevo cliente basado en múltiples variables
- * @body {
- *   edad: number,
- *   sexo: string ('M' | 'F'),
- *   tiempoSemanas: number, // PLAZO del préstamo en semanas
- *   objetivoPrestamo: string,
- *   esReferido: boolean,
- *   tieneGarantia: boolean,
- *   montoGarantia: number,
- *   montoSolicitado: number,
- *   ingresosMensuales: number
- * }
- */
-router.post('/new-client', authenticateToken, requirePermission('ratings.run'), (req, res) => {
-  try {
-    const parseBoolean = (value) => {
-      if (typeof value === 'boolean') return value;
-      if (typeof value === 'string') {
-        const normalized = value.trim().toLowerCase();
-        return ['true', '1', 'si', 'sí'].includes(normalized);
-      }
-      return Boolean(value);
-    };
+const WEEKLY_FACTOR = 12 / 52;
 
-    const parseNumber = (value, fallback = 0) => {
-      const numeric = Number(value);
-      return Number.isFinite(numeric) ? numeric : fallback;
-    };
+const toNumber = (value, fallback = 0) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+};
 
-    const round2 = (value) => Number(parseNumber(value, 0).toFixed(2));
+const round = (value, decimals = 2) => Number(toNumber(value, 0).toFixed(decimals));
 
-    const normalizarTiempoTrabajoMeses = (body) => {
-      const candidatos = [
-        body.tiempoTrabajo,
-        body.tiempo_trabajo,
-        body.antiguedadLaboralMeses
-      ];
+const parseBoolean = (value) => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return ['true', '1', 'si', 'sí'].includes(normalized);
+  }
+  return Boolean(value);
+};
 
-      for (const raw of candidatos) {
-        if (raw === undefined || raw === null || String(raw).trim() === '') {
-          continue;
-        }
-        const numeric = Number(raw);
-        if (!Number.isFinite(numeric) || numeric < 0) {
-          return { error: 'tiempoTrabajo debe ser un número mayor o igual a 0' };
-        }
-        return { value: numeric };
-      }
-
-      return { value: 0 };
-    };
-
-    const {
-      edad,
-      sexo,
-      tiempoSemanas, // AHORA: Plazo del préstamo en semanas
-      objetivoPrestamo,
-      esReferido,
-      tieneGarantia,
-      montoGarantia,
-      montoSolicitado,
-      ingresosMensuales,
-      egresosMensuales = 0,
-      otrasDeudasMensuales = 0,
-      antiguedadLaboralMeses = 0,
-      documentosCompletos = false,
-      statusLegal = req.body.status_legal,
-      tiempoTrabajo = req.body.tiempo_trabajo,
-      casaPropiaAlquiler = req.body.casa_propia_alquiler,
-      montoAuto = req.body.monto_auto,
-      pagoAuto = req.body.pago_auto,
-      gastosMensualesEstimados = req.body.estimados_gastos_mensuales,
-      deudasActualesPagosMinimos = req.body.deudas_actuales_pagos_minimos,
-      valorGarantia = req.body.valor_garantia
-    } = req.body;
-
-    const tiempoTrabajoNormalizado = normalizarTiempoTrabajoMeses(req.body);
-    if (tiempoTrabajoNormalizado.error) {
-      return res.status(400).json({
-        success: false,
-        message: tiempoTrabajoNormalizado.error
-      });
+const getAliasValue = (body, aliases = [], fallback = null) => {
+  for (const key of aliases) {
+    if (body[key] !== undefined && body[key] !== null && String(body[key]).trim() !== '') {
+      return body[key];
     }
+  }
+  return fallback;
+};
 
-    const edadNum = parseNumber(edad, NaN);
-    const tiempoSemanasNum = parseNumber(tiempoSemanas, NaN);
-    const montoSolicitadoNum = parseNumber(montoSolicitado, NaN);
-    const ingresosMensualesNum = parseNumber(ingresosMensuales, NaN);
-    const egresosMensualesNum = parseNumber(egresosMensuales, 0);
-    const otrasDeudasMensualesNum = parseNumber(otrasDeudasMensuales, 0);
-    const antiguedadLaboralMesesNum = parseNumber(antiguedadLaboralMeses, 0);
-    const tiempoTrabajoMesesNum = tiempoTrabajoNormalizado.value;
-    const montoAutoNum = parseNumber(montoAuto, 0);
-    const pagoAutoNum = parseNumber(pagoAuto, 0);
-    const gastosMensualesEstimadosNum = parseNumber(gastosMensualesEstimados, 0);
-    const deudasActualesPagosMinimosNum = parseNumber(deudasActualesPagosMinimos, 0);
-    const montoGarantiaNum = parseNumber(montoGarantia, 0);
-    const valorGarantiaNum = parseNumber(valorGarantia, 0);
-    const esReferidoBool = parseBoolean(esReferido);
-    const tieneGarantiaBool = parseBoolean(tieneGarantia);
-    const documentosCompletosBool = parseBoolean(documentosCompletos);
-    const statusLegalNorm = String(statusLegal || 'NO_ESPECIFICADO').trim().toUpperCase();
-    const viviendaNorm = String(casaPropiaAlquiler || 'NO_ESPECIFICADO').trim().toUpperCase();
-    const montoGarantiaEfectivo = valorGarantiaNum > 0 ? valorGarantiaNum : montoGarantiaNum;
-    const tiempoLaboralEfectivoMeses = tiempoTrabajoMesesNum;
+const getNonNegativeAliasNumber = (body, aliases = [], label = 'valor', fallback = 0) => {
+  const raw = getAliasValue(body, aliases, null);
+  if (raw === null) return fallback;
+  const numeric = Number(raw);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    throw new Error(`${label} debe ser un número mayor o igual a 0`);
+  }
+  return numeric;
+};
 
-    // Validaciones básicas
-    if (!Number.isFinite(edadNum) || !sexo || !Number.isFinite(tiempoSemanasNum) || !Number.isFinite(montoSolicitadoNum) || !Number.isFinite(ingresosMensualesNum)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Faltan campos requeridos: edad, sexo, tiempoSemanas (plazo), montoSolicitado, ingresosMensuales'
-      });
-    }
+const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 
-    // VALIDACIONES DETALLADAS
-    const errores = [];
-    
-    if (edadNum < 18 || edadNum > 80) {
-      errores.push('La edad debe estar entre 18 y 80 años');
-    }
+const toWeekly = (monthlyValue) => monthlyValue * WEEKLY_FACTOR;
 
-    if (!['M', 'F'].includes(sexo.toUpperCase())) {
-      errores.push('El sexo debe ser "M" (masculino) o "F" (femenino)');
-    }
+const calculateCuotaSemanal = ({ monto, tasaSemanal, semanas, tipoAmortizacion }) => {
+  const n = Math.max(Math.floor(toNumber(semanas, 0)), 1);
+  const principal = Math.max(toNumber(monto, 0), 0);
+  const rate = Math.max(toNumber(tasaSemanal, 0), 0);
+  const tipo = String(tipoAmortizacion || 'SIMPLE').toUpperCase();
 
-    if (tiempoSemanasNum < 4 || tiempoSemanasNum > 208) {
-      errores.push('El plazo del préstamo debe estar entre 4 semanas (1 mes) y 208 semanas (4 años)');
-    }
+  if (principal <= 0) return 0;
 
-    if (montoSolicitadoNum <= 0) {
-      errores.push('El monto solicitado debe ser mayor a 0');
-    }
+  if (tipo === 'FRANCES') {
+    if (rate === 0) return round(principal / n);
+    const factor = Math.pow(1 + rate, n);
+    const cuota = principal * ((rate * factor) / (factor - 1));
+    return round(cuota);
+  }
 
-    if (ingresosMensualesNum <= 0) {
-      errores.push('Los ingresos mensuales deben ser mayores a 0');
-    }
+  const interesTotal = principal * rate * n;
+  return round((principal + interesTotal) / n);
+};
 
-    if (tieneGarantiaBool && montoGarantiaEfectivo < 0) {
-      errores.push('El monto de la garantía no puede ser negativo');
-    }
+const inferRateByPd = (pd) => {
+  if (pd < 0.15) return 0.006;
+  if (pd < 0.30) return 0.009;
+  return 0.012;
+};
 
-    if (errores.length > 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Errores de validación',
-        errores
-      });
-    }
+const invertMontoFromCuota = ({ cuotaObjetivo, tasaSemanal, semanas, tipoAmortizacion }) => {
+  const cuota = Math.max(toNumber(cuotaObjetivo, 0), 0);
+  const n = Math.max(Math.floor(toNumber(semanas, 0)), 1);
+  const r = Math.max(toNumber(tasaSemanal, 0), 0);
+  const tipo = String(tipoAmortizacion || 'SIMPLE').toUpperCase();
 
-    // CALCULO DEL SCORE (0-100 puntos) CON DETALLES
-    let score = 50; // Puntuación base
-    const calculosDetallados = [];
+  if (cuota <= 0) return 0;
 
-    // 1. FACTOR EDAD (0-15 puntos)
-    let edadScore = 0;
-    let edadCategoria = '';
-    let edadExplicacion = '';
-    
-    if (edadNum >= 25 && edadNum <= 50) {
-      edadScore = 15;
-      edadCategoria = 'ÓPTIMA';
-      edadExplicacion = 'Edad con mayor estabilidad laboral y financiera';
-    } else if ((edadNum >= 20 && edadNum < 25) || (edadNum > 50 && edadNum <= 60)) {
-      edadScore = 10;
-      edadCategoria = 'ACEPTABLE';
-      edadExplicacion = edadNum < 25 ? 'Adulto joven con potencial crecimiento' : 'Adulto mayor con experiencia';
-    } else if (edadNum >= 18 && edadNum < 20) {
-      edadScore = 5;
-      edadCategoria = 'JOVEN';
-      edadExplicacion = 'Mayoría de edad reciente, experiencia limitada';
-    } else if (edadNum > 60) {
-      edadScore = 3;
-      edadCategoria = 'ADULTO MAYOR';
-      edadExplicacion = 'Mayor edad, posible proximidad a retiro';
-    }
-    
-    score += edadScore;
-    calculosDetallados.push({
-      factor: 'EDAD',
-      valor: edadNum,
-      categoria: edadCategoria,
-      puntos: edadScore,
-      maxPuntos: 15,
-      explicacion: edadExplicacion,
-      porcentaje: `${((edadScore / 15) * 100).toFixed(1)}%`
-    });
+  if (tipo === 'FRANCES') {
+    if (r === 0) return round(cuota * n);
+    const factor = Math.pow(1 + r, n);
+    const monto = cuota * ((factor - 1) / (r * factor));
+    return round(monto);
+  }
 
-    // 2. FACTOR SEXO (0-5 puntos)
-    let sexoScore = sexo.toUpperCase() === 'F' ? 5 : 3;
-    let sexoExplicacion = sexo.toUpperCase() === 'F' 
-      ? 'Estudios muestran mayor cumplimiento en pagos en género femenino' 
-      : 'Género masculino - cumplimiento promedio';
-    
-    score += sexoScore;
-    calculosDetallados.push({
-      factor: 'GÉNERO',
-      valor: sexo.toUpperCase() === 'M' ? 'Masculino' : 'Femenino',
-      puntos: sexoScore,
-      maxPuntos: 5,
-      explicacion: sexoExplicacion,
-      porcentaje: `${((sexoScore / 5) * 100).toFixed(1)}%`
-    });
+  return round((cuota * n) / (1 + r * n));
+};
 
-    // 3. FACTOR PLAZO DEL PRÉSTAMO (TIEMPOSEMANAS) - MODIFICADO (0-15 puntos)
-    let plazoScore = 0;
-    let plazoCategoria = '';
-    let plazoExplicacion = '';
-    
-    const plazoMeses = tiempoSemanasNum / 4.33; // Convertir semanas a meses
-    
-    // Evaluación del plazo solicitado vs plazo recomendado
-    const plazoRecomendadoMeses = (montoSolicitadoNum / (ingresosMensualesNum * 0.3)); // 30% de ingresos
-    
-    if (plazoMeses <= plazoRecomendadoMeses) {
-      // Plazo adecuado o menor al recomendado
-      if (plazoMeses <= 6) {
-        plazoScore = 15;
-        plazoCategoria = 'PLAZO CORTÓ ÓPTIMO';
-        plazoExplicacion = 'Plazo corto - menor riesgo de incumplimiento';
-      } else if (plazoMeses <= 12) {
-        plazoScore = 12;
-        plazoCategoria = 'PLAZO ESTÁNDAR';
-        plazoExplicacion = 'Plazo adecuado a capacidad de pago';
-      } else if (plazoMeses <= 24) {
-        plazoScore = 10;
-        plazoCategoria = 'PLAZO MODERADO';
-        plazoExplicacion = 'Plazo aceptable, monitoreo recomendado';
-      } else {
-        plazoScore = 8;
-        plazoCategoria = 'PLAZO LARGO';
-        plazoExplicacion = 'Plazo extendido, mayor riesgo temporal';
-      }
-    } else {
-      // Plazo excede lo recomendado
-      if (plazoMeses <= plazoRecomendadoMeses * 1.5) {
-        plazoScore = 5;
-        plazoCategoria = 'PLAZO EXCEDIDO MODERADO';
-        plazoExplicacion = 'Plazo mayor al recomendado - riesgo incrementado';
-      } else {
-        plazoScore = 0;
-        plazoCategoria = 'PLAZO EXCESIVO';
-        plazoExplicacion = 'Plazo muy largo respecto a capacidad - alto riesgo';
-      }
-    }
-    
-    score += plazoScore;
-    calculosDetallados.push({
-      factor: 'PLAZO PRÉSTAMO',
-      valor: `${tiempoSemanasNum} semanas (${plazoMeses.toFixed(1)} meses)`,
-      categoria: plazoCategoria,
-      puntos: plazoScore,
-      maxPuntos: 15,
-      plazoRecomendado: `${plazoRecomendadoMeses.toFixed(1)} meses`,
-      diferencia: `${(plazoMeses - plazoRecomendadoMeses).toFixed(1)} meses`,
-      explicacion: plazoExplicacion,
-      porcentaje: `${((plazoScore / 15) * 100).toFixed(1)}%`
-    });
+const getRatingFromScore = (score) => {
+  if (score >= 750) return 'A';
+  if (score >= 680) return 'B';
+  if (score >= 620) return 'C';
+  return 'D';
+};
 
-    // 4. FACTOR OBJETIVO DEL PRÉSTAMO (0-10 puntos)
-    let objetivoScore = 0;
-    let objetivoExplicacion = '';
-    const objetivosValidos = ['pago_deuda', 'inversion', 'consumo', 'emergencia', 'otros'];
-    
-    if (!objetivoPrestamo || !objetivosValidos.includes(objetivoPrestamo)) {
-      return res.status(400).json({
-        success: false,
-        message: `Objetivo de préstamo inválido. Debe ser uno de: ${objetivosValidos.join(', ')}`
-      });
-    }
+const evaluateWeeklyScoring = (body = {}) => {
+  const edad = toNumber(body.edad, NaN);
+  const sexo = String(body.sexo || '').toUpperCase();
+  const tiempoSemanas = toNumber(body.tiempoSemanas, NaN);
+  const objetivoPrestamo = String(body.objetivoPrestamo || '').toLowerCase();
+  const esReferido = parseBoolean(body.esReferido);
+  const tieneGarantia = parseBoolean(body.tieneGarantia);
+  const montoSolicitado = toNumber(body.montoSolicitado, NaN);
+  const ingresosMensuales = toNumber(body.ingresosMensuales, NaN);
+  const egresosMensuales = toNumber(body.egresosMensuales, 0);
+  const otrasDeudasMensuales = toNumber(body.otrasDeudasMensuales, 0);
+  const documentosCompletos = parseBoolean(body.documentosCompletos);
+  const statusLegal = String(getAliasValue(body, ['statusLegal', 'status_legal'], 'NO_ESPECIFICADO')).toUpperCase();
+  const tiempoTrabajo = getNonNegativeAliasNumber(body, ['tiempoTrabajo', 'tiempo_trabajo', 'antiguedadLaboralMeses'], 'tiempoTrabajo', 0);
+  const casaPropiaAlquiler = String(getAliasValue(body, ['casaPropiaAlquiler', 'casa_propia_alquiler'], 'OTRO')).toUpperCase();
+  const montoAuto = toNumber(getAliasValue(body, ['montoAuto', 'monto_auto'], 0), 0);
+  const pagoAutoMensual = toNumber(getAliasValue(body, ['pagoAutoMensual', 'pagoAuto', 'pago_auto'], 0), 0);
+  const gastosMensualesEstimados = toNumber(getAliasValue(body, ['gastosMensualesEstimados', 'estimados_gastos_mensuales'], 0), 0);
+  const deudasActualesPagosMinimosMensuales = toNumber(getAliasValue(body, ['deudasActualesPagosMinimosMensuales', 'deudasActualesPagosMinimos', 'deudas_actuales_pagos_minimos'], 0), 0);
+  const valorGarantia = toNumber(getAliasValue(body, ['valorGarantia', 'valor_garantia', 'montoGarantia'], 0), 0);
+  const tipoAmortizacion = String(body.tipoAmortizacion || 'SIMPLE').toUpperCase();
 
-    switch (objetivoPrestamo) {
-      case 'pago_deuda':
-        objetivoScore = 8;
-        objetivoExplicacion = 'Mejora situación financiera al consolidar deudas';
-        break;
-      case 'inversion':
-        objetivoScore = 10;
-        objetivoExplicacion = 'Genera retorno de inversión - mejora capacidad de pago futura';
-        break;
-      case 'emergencia':
-        objetivoScore = 6;
-        objetivoExplicacion = 'Necesidad imprevista - moderado riesgo';
-        break;
-      case 'consumo':
-        objetivoScore = 4;
-        objetivoExplicacion = 'Gasto no productivo - mayor riesgo de impago';
-        break;
-      case 'otros':
-        objetivoScore = 3;
-        objetivoExplicacion = 'Propósito no especificado - requiere mayor análisis';
-        break;
-    }
-    
-    score += objetivoScore;
-    calculosDetallados.push({
-      factor: 'OBJETIVO PRÉSTAMO',
-      valor: objetivoPrestamo.toUpperCase().replace('_', ' '),
-      puntos: objetivoScore,
-      maxPuntos: 10,
-      explicacion: objetivoExplicacion,
-      riesgo: objetivoPrestamo === 'inversion' ? 'BAJO' : 
-              objetivoPrestamo === 'pago_deuda' ? 'MODERADO-BAJO' :
-              objetivoPrestamo === 'emergencia' ? 'MODERADO' :
-              objetivoPrestamo === 'consumo' ? 'ALTO' : 'MODERADO-ALTO',
-      porcentaje: `${((objetivoScore / 10) * 100).toFixed(1)}%`
-    });
+  const errores = [];
+  if (!Number.isFinite(edad) || edad < 18 || edad > 80) errores.push('edad debe estar entre 18 y 80');
+  if (!['M', 'F'].includes(sexo)) errores.push('sexo debe ser M o F');
+  if (!Number.isFinite(tiempoSemanas) || tiempoSemanas < 4 || tiempoSemanas > 208) errores.push('tiempoSemanas debe estar entre 4 y 208');
+  if (!Number.isFinite(montoSolicitado) || montoSolicitado <= 0) errores.push('montoSolicitado debe ser mayor a 0');
+  if (!Number.isFinite(ingresosMensuales) || ingresosMensuales <= 0) errores.push('ingresosMensuales debe ser mayor a 0');
+  if (!['SIMPLE', 'FRANCES'].includes(tipoAmortizacion)) errores.push('tipoAmortizacion debe ser SIMPLE o FRANCES');
+  if (tiempoTrabajo < 0) errores.push('tiempoTrabajo debe ser un número mayor o igual a 0');
+  if (errores.length > 0) {
+    const error = new Error('Errores de validación');
+    error.details = errores;
+    throw error;
+  }
 
-    // 5. FACTOR REFERIDO (0-5 puntos)
-    let referidoScore = esReferidoBool ? 5 : 0;
-    let referidoExplicacion = esReferidoBool
-      ? 'Cliente referido por cliente existente - mayor confianza' 
-      : 'Cliente no referido - evaluación estándar';
-    
-    score += referidoScore;
-    calculosDetallados.push({
-      factor: 'REFERIDO',
-      valor: esReferidoBool ? 'SÍ' : 'NO',
-      puntos: referidoScore,
-      maxPuntos: 5,
-      explicacion: referidoExplicacion,
-      impacto: esReferidoBool ? 'POSITIVO' : 'NEUTRO',
-      porcentaje: `${((referidoScore / 5) * 100).toFixed(1)}%`
-    });
+  const inputNormalizado = {
+    ingresosSemanales: round(toWeekly(ingresosMensuales)),
+    egresosSemanales: round(toWeekly(egresosMensuales)),
+    otrasDeudasSemanales: round(toWeekly(otrasDeudasMensuales)),
+    pagoAutoSemanal: round(toWeekly(pagoAutoMensual)),
+    gastosSemanalesEstimados: round(toWeekly(gastosMensualesEstimados)),
+    deudasActualesPagosMinimosSemanales: round(toWeekly(deudasActualesPagosMinimosMensuales))
+  };
 
-    // 6. FACTOR GARANTÍA (0-20 puntos) - CÁLCULO DETALLADO
-    let garantiaScore = 0;
-    let garantiaCategoria = '';
-    let garantiaExplicacion = '';
-    let relacionGarantia = 0;
-    
-    if (tieneGarantiaBool && montoGarantiaEfectivo > 0) {
-      relacionGarantia = (montoGarantiaEfectivo / montoSolicitadoNum) * 100;
-      
-      if (relacionGarantia >= 150) {
-        garantiaScore = 20;
-        garantiaCategoria = 'GARANTÍA SOBRECOLATERALIZADA';
-        garantiaExplicacion = `Garantía excede en ${(relacionGarantia - 100).toFixed(1)}% el monto solicitado - riesgo mínimo`;
-      } else if (relacionGarantia >= 100) {
-        garantiaScore = 15;
-        garantiaCategoria = 'GARANTÍA COMPLETA';
-        garantiaExplicacion = 'Garantía cubre el 100% del préstamo - riesgo bajo';
-      } else if (relacionGarantia >= 50) {
-        garantiaScore = 10;
-        garantiaCategoria = 'GARANTÍA PARCIAL';
-        garantiaExplicacion = `Garantía cubre ${relacionGarantia.toFixed(1)}% del préstamo - riesgo moderado`;
-      } else if (relacionGarantia > 0) {
-        garantiaScore = 5;
-        garantiaCategoria = 'GARANTÍA MÍNIMA';
-        garantiaExplicacion = `Garantía cubre solo ${relacionGarantia.toFixed(1)}% del préstamo - riesgo alto`;
-      }
-    } else {
-      relacionGarantia = 0;
-      garantiaCategoria = 'SIN GARANTÍA';
-      garantiaExplicacion = 'Préstamo sin colateral - riesgo máximo';
-    }
-    
-    score += garantiaScore;
-    calculosDetallados.push({
-      factor: 'GARANTÍA',
-      valor: tieneGarantiaBool ? `$${montoGarantiaEfectivo.toLocaleString()}` : 'NO',
-      categoria: garantiaCategoria,
-      puntos: garantiaScore,
-      maxPuntos: 20,
-      relacion: `${relacionGarantia.toFixed(1)}%`,
-      cobertura: relacionGarantia >= 100 ? 'COMPLETA' : 
-                 relacionGarantia >= 50 ? 'PARCIAL' : 
-                 relacionGarantia > 0 ? 'MÍNIMA' : 'NULA',
-      explicacion: garantiaExplicacion,
-      porcentaje: `${((garantiaScore / 20) * 100).toFixed(1)}%`
-    });
+  const ingresoNetoSemanal = round(
+    inputNormalizado.ingresosSemanales
+    - inputNormalizado.egresosSemanales
+    - inputNormalizado.otrasDeudasSemanales
+    - inputNormalizado.pagoAutoSemanal
+    - inputNormalizado.gastosSemanalesEstimados
+    - inputNormalizado.deudasActualesPagosMinimosSemanales
+  );
 
-    // 7. FACTOR CAPACIDAD DE PAGO (0-20 puntos) - ANÁLISIS DETALLADO CON VARIABLES NUEVAS
-    const pagoSemanalEstimado = tiempoSemanasNum > 0 ? (montoSolicitadoNum / tiempoSemanasNum) : 0;
-    const ingresosSemanales = ingresosMensualesNum / 4.333;
-    const egresosBaseMensuales = egresosMensualesNum + otrasDeudasMensualesNum + gastosMensualesEstimadosNum + deudasActualesPagosMinimosNum + pagoAutoNum;
-    const ingresoDisponibleMensualBase = Math.max(ingresosMensualesNum - egresosBaseMensuales, 0);
+  const cargaFinancieraSemanal = inputNormalizado.ingresosSemanales > 0
+    ? (
+      (inputNormalizado.otrasDeudasSemanales
+      + inputNormalizado.pagoAutoSemanal
+      + inputNormalizado.deudasActualesPagosMinimosSemanales)
+      / inputNormalizado.ingresosSemanales
+    )
+    : 0;
 
-    const factorStatusLegal = {
-      FORMAL: 1.0,
-      EN_REGLA: 1.0,
-      RESIDENTE: 0.9,
-      TEMPORAL: 0.8,
-      IRREGULAR: 0.65,
-      NO_ESPECIFICADO: 0.85
-    }[statusLegalNorm] || 0.85;
+  const ratioGastosIngresoSemanal = inputNormalizado.ingresosSemanales > 0
+    ? (
+      (inputNormalizado.egresosSemanales + inputNormalizado.gastosSemanalesEstimados)
+      / inputNormalizado.ingresosSemanales
+    )
+    : 0;
 
-    const factorEstabilidadLaboral = tiempoLaboralEfectivoMeses >= 24
-      ? 1.0
-      : tiempoLaboralEfectivoMeses >= 12
-        ? 0.9
-        : tiempoLaboralEfectivoMeses >= 6
-          ? 0.75
-          : 0.6;
+  const loanToIncomeSemanal = (inputNormalizado.ingresosSemanales > 0 && tiempoSemanas > 0)
+    ? (montoSolicitado / (inputNormalizado.ingresosSemanales * tiempoSemanas))
+    : 0;
 
-    const factorVivienda = viviendaNorm === 'PROPIA' ? 1.0 : viviendaNorm === 'ALQUILER' ? 0.9 : 0.95;
+  const collateralCoverage = montoSolicitado > 0
+    ? Math.min(valorGarantia / montoSolicitado, 3)
+    : 0;
 
-    const capacidadPagoMensual = round2(ingresoDisponibleMensualBase * 0.35 * factorStatusLegal * factorEstabilidadLaboral * factorVivienda);
-    const capacidadPagoSemanalMonto = round2(capacidadPagoMensual / 4.333);
-    const coberturaCuotaPct = pagoSemanalEstimado > 0 ? (capacidadPagoSemanalMonto / pagoSemanalEstimado) * 100 : 0;
-    const capacidadPago = coberturaCuotaPct;
-    let capacidadScore = 0;
-    let capacidadCategoria = '';
-    let capacidadExplicacion = '';
-    
-    if (capacidadPago >= 200) {
-      capacidadScore = 20;
-      capacidadCategoria = 'CAPACIDAD EXCELENTE';
-      capacidadExplicacion = 'La capacidad semanal estimada cubre más del 200% de la cuota semanal';
-    } else if (capacidadPago >= 150) {
-      capacidadScore = 15;
-      capacidadCategoria = 'CAPACIDAD SOBRESALIENTE';
-      capacidadExplicacion = 'La capacidad semanal estimada cubre entre 150% y 200% de la cuota semanal';
-    } else if (capacidadPago >= 100) {
-      capacidadScore = 10;
-      capacidadCategoria = 'CAPACIDAD ADECUADA';
-      capacidadExplicacion = 'La capacidad semanal estimada cubre entre 100% y 150% de la cuota semanal';
-    } else if (capacidadPago >= 50) {
-      capacidadScore = 5;
-      capacidadCategoria = 'CAPACIDAD LIMITADA';
-      capacidadExplicacion = 'La capacidad semanal estimada cubre entre 50% y 100% de la cuota semanal';
-    } else {
-      capacidadScore = 0;
-      capacidadCategoria = 'CAPACIDAD INSUFICIENTE';
-      capacidadExplicacion = 'La capacidad semanal estimada cubre menos del 50% de la cuota semanal';
-    }
-    
-    score += capacidadScore;
-    
-    calculosDetallados.push({
-      factor: 'CAPACIDAD DE PAGO',
-      valor: `$${ingresosMensualesNum.toLocaleString()} mensuales`,
-      categoria: capacidadCategoria,
-      puntos: capacidadScore,
-      maxPuntos: 20,
-      ratio: `${capacidadPago.toFixed(1)}%`,
-      analisis: {
-        ingresosSemanales: `$${ingresosSemanales.toLocaleString()}`,
-        pagoSemanalEstimado: `$${pagoSemanalEstimado.toLocaleString()}`,
-        relacionPagoIngresos: `${(pagoSemanalEstimado > 0 ? (pagoSemanalEstimado / Math.max(capacidadPagoSemanalMonto, 1)) * 100 : 0).toFixed(1)}%`,
-        plazoSolicitado: `${tiempoSemanasNum} semanas`,
-        cuotaRecomendada: `$${capacidadPagoSemanalMonto.toLocaleString()} (capacidad semanal estimada)`,
-        capacidadPagoMensual: `$${capacidadPagoMensual.toLocaleString()}`,
-        ingresoDisponibleMensualBase: `$${ingresoDisponibleMensualBase.toLocaleString()}`,
-        ajusteStatusLegal: factorStatusLegal,
-        ajusteTiempoTrabajo: factorEstabilidadLaboral,
-        ajusteVivienda: factorVivienda,
-        montoAuto: `$${montoAutoNum.toLocaleString()}`,
-        pagoAuto: `$${pagoAutoNum.toLocaleString()}`
-      },
-      explicacion: capacidadExplicacion,
-      porcentaje: `${((capacidadScore / 20) * 100).toFixed(1)}%`
-    });
+  const estabilidadLaboral = Math.min(tiempoTrabajo / 24, 1);
+  const formalidad = statusLegal === 'FORMAL' ? 1 : 0;
+  const documentacion = documentosCompletos ? 1 : 0;
+  const referido = esReferido ? 1 : 0;
+  const garantia = tieneGarantia ? 1 : 0;
 
-    // 8. FACTOR ADICIONAL: CONGRUENCIA MONTO-PLAZO (0-10 puntos)
-    let congruenciaScore = 0;
-    let congruenciaCategoria = '';
-    let congruenciaExplicacion = '';
-    
-    // Evaluar si el monto y plazo son congruentes
-    const montoPorMes = montoSolicitadoNum / plazoMeses;
-    const ingresoPorMesRecomendado = montoPorMes * 3; // Debería ser máximo 1/3 de ingresos
-    
-    if (ingresoPorMesRecomendado <= ingresosMensualesNum) {
-      congruenciaScore = 10;
-      congruenciaCategoria = 'CONGRUENCIA ÓPTIMA';
-      congruenciaExplicacion = 'Monto y plazo son proporcionales a ingresos';
-    } else if (ingresoPorMesRecomendado <= ingresosMensualesNum * 1.5) {
-      congruenciaScore = 7;
-      congruenciaCategoria = 'CONGRUENCIA ACEPTABLE';
-      congruenciaExplicacion = 'Monto y plazo son aceptables para ingresos';
-    } else if (ingresoPorMesRecomendado <= ingresosMensualesNum * 2) {
-      congruenciaScore = 3;
-      congruenciaCategoria = 'CONGRUENCIA LIMITADA';
-      congruenciaExplicacion = 'Monto o plazo podrían estar sobrestimados';
-    } else {
-      congruenciaScore = 0;
-      congruenciaCategoria = 'INCONGRUENCIA';
-      congruenciaExplicacion = 'Monto y plazo no son proporcionales a ingresos';
-    }
-    
-    score += congruenciaScore;
-    calculosDetallados.push({
-      factor: 'CONGRUENCIA MONTO-PLAZO',
-      valor: `$${montoSolicitadoNum.toLocaleString()} / ${plazoMeses.toFixed(1)} meses`,
-      categoria: congruenciaCategoria,
-      puntos: congruenciaScore,
-      maxPuntos: 10,
-      montoPorMes: `$${montoPorMes.toLocaleString()}`,
-      explicacion: congruenciaExplicacion,
-      porcentaje: `${((congruenciaScore / 10) * 100).toFixed(1)}%`
-    });
+  const viviendaScore = casaPropiaAlquiler === 'PROPIA'
+    ? 1.0
+    : casaPropiaAlquiler === 'ALQUILER'
+      ? 0.6
+      : casaPropiaAlquiler === 'FAMILIAR'
+        ? 0.4
+        : 0.3;
 
-    // Asegurar que el score esté entre 0 y 100
-    score = Math.max(0, Math.min(100, Math.round(score)));
+  const z = -1.10
+    + 1.90 * cargaFinancieraSemanal
+    + 1.20 * loanToIncomeSemanal
+    - 1.30 * estabilidadLaboral
+    - 0.80 * formalidad
+    - 0.60 * documentacion
+    - 0.70 * collateralCoverage
+    - 0.30 * referido
+    - 0.20 * garantia
+    - 0.15 * viviendaScore;
 
-    // CALCULO DEL RIESGO TOTAL
-    let riesgoTotal = '';
-    let colorRiesgo = '';
-    
-    if (score >= 80) {
-      riesgoTotal = 'MUY BAJO';
-      colorRiesgo = '#10B981'; // Verde
-    } else if (score >= 65) {
-      riesgoTotal = 'BAJO';
-      colorRiesgo = '#34D399'; // Verde claro
-    } else if (score >= 50) {
-      riesgoTotal = 'MODERADO';
-      colorRiesgo = '#FBBF24'; // Amarillo
-    } else if (score >= 35) {
-      riesgoTotal = 'ALTO';
-      colorRiesgo = '#F97316'; // Naranja
-    } else {
-      riesgoTotal = 'MUY ALTO';
-      colorRiesgo = '#EF4444'; // Rojo
-    }
+  const pd = 1 / (1 + Math.exp(-z));
+  const odds = pd / (1 - pd);
+  const scoreRaw = 600 - 50 * Math.log(odds);
+  const score = Math.round(clamp(scoreRaw, 300, 850));
+  const rating = getRatingFromScore(score);
 
-    // ANÁLISIS DE RATIOS FINANCIEROS
-    const ratiosFinancieros = {
-      deudaIngreso: ((montoSolicitadoNum / ingresosMensualesNum) * 100).toFixed(1) + '%',
-      garantiaDeuda: relacionGarantia.toFixed(1) + '%',
-      capacidadEndeudamiento: capacidadPago.toFixed(1) + '%',
-      relacionCuotaIngreso: ((pagoSemanalEstimado / ingresosSemanales) * 100).toFixed(1) + '%',
-      plazoAdecuado: plazoMeses <= plazoRecomendadoMeses ? 'SÍ' : 'NO'
-    };
+  const factorPrudencia = pd < 0.15 ? 0.7 : pd < 0.30 ? 0.6 : 0.5;
+  const capacidadPagoSemanal = round(Math.max(0, ingresoNetoSemanal * factorPrudencia));
 
-    // DETERMINAR CALIFICACIÓN FINAL
-    let calificacion = '';
-    let aprobado = false;
-    let montoAprobado = 0;
-    let tasaInteres = 0;
-    let plazoAprobado = tiempoSemanasNum;
-    let condicionesAprobacion = [];
+  const tasaInteresSemanal = inferRateByPd(pd);
+  let plazoOfertaSemanas = Math.max(Math.floor(tiempoSemanas), 1);
 
-    if (score >= 80) {
-      calificacion = 'EXCELENTE';
-      aprobado = true;
-      montoAprobado = montoSolicitadoNum;
-      tasaInteres = 8.5;
-      condicionesAprobacion = [
-        'Aprobación inmediata',
-        'Plazo solicitado aprobado',
-        'Sin garantías adicionales requeridas',
-        'Tasa preferencial del 8.5% anual'
-      ];
-    } else if (score >= 65) {
-      calificacion = 'BUENO';
-      aprobado = true;
-      montoAprobado = montoSolicitadoNum * 0.85;
-      // Reducir plazo si es muy largo
-      if (plazoMeses > plazoRecomendadoMeses * 1.2) {
-        plazoAprobado = Math.min(tiempoSemanasNum, Math.floor(plazoRecomendadoMeses * 1.2 * 4.33));
-      }
-      tasaInteres = 12.5;
-      condicionesAprobacion = [
-        `Aprobación del ${((montoAprobado / montoSolicitadoNum) * 100).toFixed(0)}% del monto solicitado`,
-        `Plazo ajustado a ${Math.floor(plazoAprobado / 4.33)} meses`,
-        'Revisión de documentación adicional',
-        'Tasa estándar del 12.5% anual'
-      ];
-    } else if (score >= 50) {
-      calificacion = 'REGULAR';
-      aprobado = true;
-      montoAprobado = montoSolicitadoNum * 0.70;
-      // Reducir plazo significativamente
-      plazoAprobado = Math.min(tiempoSemanasNum, Math.floor(plazoRecomendadoMeses * 4.33));
-      tasaInteres = 16.0;
-      condicionesAprobacion = [
-        `Aprobación limitada al ${((montoAprobado / montoSolicitadoNum) * 100).toFixed(0)}% del monto`,
-        `Plazo reducido a ${Math.floor(plazoAprobado / 4.33)} meses`,
-        'Garantía adicional requerida',
-        'Tasa elevada del 16.0% anual'
-      ];
-    } else if (score >= 35) {
-      calificacion = 'BAJO';
-      aprobado = false;
-      montoAprobado = montoSolicitadoNum * 0.50;
-      plazoAprobado = Math.floor(Math.min(plazoRecomendadoMeses, 6) * 4.33); // Máximo 6 meses
-      tasaInteres = 20.0;
-      condicionesAprobacion = [
-        'NO APROBADO - Perfil de riesgo alto',
-        `Oferta alternativa: ${((montoAprobado / montoSolicitadoNum) * 100).toFixed(0)}% del monto en ${Math.floor(plazoAprobado / 4.33)} meses`,
-        'Garantía real requerida (propiedad o vehículo)',
-        'Tasa máxima del 20.0% anual'
-      ];
-    } else {
-      calificacion = 'NO APROBADO';
-      aprobado = false;
-      montoAprobado = 0;
-      tasaInteres = 0;
-      plazoAprobado = 0;
-      condicionesAprobacion = [
-        'NO APROBADO - Riesgo crediticio muy alto',
-        'Plazo solicitado incompatible con capacidad de pago',
-        'Recomendación: Reducir monto o aumentar plazo considerablemente'
-      ];
-    }
+  let cuotaSemanal = calculateCuotaSemanal({
+    monto: montoSolicitado,
+    tasaSemanal: tasaInteresSemanal,
+    semanas: plazoOfertaSemanas,
+    tipoAmortizacion
+  });
 
-    // CÁLCULO DE CUOTAS DETALLADO
-    const plazoAprobadoMeses = plazoAprobado / 4.33;
-    const tasaMensual = tasaInteres / 12 / 100;
-    let cuotaMensual = 0;
-    
-    if (aprobado && montoAprobado > 0 && tasaInteres > 0) {
-      if (tasaMensual > 0) {
-        cuotaMensual = (montoAprobado * tasaMensual * Math.pow(1 + tasaMensual, plazoAprobadoMeses)) / 
-                      (Math.pow(1 + tasaMensual, plazoAprobadoMeses) - 1);
-      } else {
-        cuotaMensual = montoAprobado / plazoAprobadoMeses; // Sin intereses (caso especial)
-      }
-    }
-
-    // RESPUESTA FINTECH-GRADE
-    const timestamp = new Date().toISOString();
-    const requestId = `ANL-NEW-${Date.now()}`;
-    const ingresoDisponible = ingresosMensualesNum - egresosMensualesNum - otrasDeudasMensualesNum;
-    const ratioGarantia = montoSolicitadoNum > 0 ? (montoGarantiaEfectivo || 0) / montoSolicitadoNum : 0;
-    const montoVsIngreso = ingresosMensualesNum > 0 ? montoSolicitadoNum / ingresosMensualesNum : 0;
-    const cuotaEstimadaSemanal = tiempoSemanasNum > 0 ? montoSolicitadoNum / tiempoSemanasNum : 0;
-    const ratioCuotaIngresoSemanal = ingresosSemanales > 0 ? cuotaEstimadaSemanal / ingresosSemanales : 0;
-
-    const decision = score >= 75 ? 'APROBADO' : score >= 60 ? 'APROBADO_CONDICIONES' : 'RECHAZADO';
-    const aprobadoFinal = score >= 60;
-    const riesgoTotalFinal = score >= 75 ? 'BAJO' : score >= 60 ? 'MODERADO' : 'ALTO';
-
-    res.json({
-      timestamp,
-      resumen: {
-        scoreFinal: score,
-        decision,
-        aprobado: aprobadoFinal,
-        riesgoTotal: riesgoTotalFinal,
-        montoSolicitado: montoSolicitadoNum,
-        capacidadPagoMensual: capacidadPagoMensual,
-        capacidadPagoSemanal: capacidadPagoSemanalMonto
-      },
-      inputsNormalizados: {
-        edad: edadNum,
-        sexo: sexo.toUpperCase(),
-        plazoSemanas: tiempoSemanasNum,
-        objetivoPrestamo: objetivoPrestamo.toUpperCase(),
-        referido: !!esReferidoBool,
-        garantia: {
-          tiene: !!tieneGarantiaBool,
-          valor: montoGarantiaEfectivo || 0
-        },
-        montoSolicitado: montoSolicitadoNum,
-        ingresosMensuales: ingresosMensualesNum,
-        egresosMensuales: egresosMensualesNum,
-        otrasDeudasMensuales: otrasDeudasMensualesNum,
-        antiguedadLaboralMeses: antiguedadLaboralMesesNum,
-        documentosCompletos: !!documentosCompletosBool,
-        statusLegal: statusLegalNorm,
-        tiempoTrabajoMeses: tiempoLaboralEfectivoMeses,
-        vivienda: viviendaNorm,
-        montoAuto: montoAutoNum,
-        pagoAuto: pagoAutoNum,
-        gastosMensualesEstimados: gastosMensualesEstimadosNum,
-        deudasActualesPagosMinimos: deudasActualesPagosMinimosNum,
-        valorGarantia: montoGarantiaEfectivo
-      },
-      precalculos: {
-        ingresoDisponible,
-        montoVsIngreso: parseFloat(montoVsIngreso.toFixed(2)),
-        ratioGarantia: parseFloat(ratioGarantia.toFixed(2)),
-        cuotaEstimada: {
-          metodo: 'AMORTIZACION_SIMPLE_ESTIMADA',
-          semanal: parseFloat(cuotaEstimadaSemanal.toFixed(2)),
-          nota: 'Estimación para ratio cuota/ingreso; el cronograma final puede variar por modalidad'
-        },
-        capacidadPago: {
-          montoMensual: capacidadPagoMensual,
-          montoSemanal: capacidadPagoSemanalMonto,
-          coberturaCuotaPct: parseFloat(coberturaCuotaPct.toFixed(2))
-        },
-        ratios: {
-          ratioCuotaIngresoSemanal: parseFloat(ratioCuotaIngresoSemanal.toFixed(4)),
-          limiteRecomendado: 0.3
-        },
-        flags: {
-          excedeRatioCuotaIngreso: ratioCuotaIngresoSemanal > 0.3,
-          ingresoDisponibleBajo: ingresoDisponible < 0,
-          garantiaSuficiente: ratioGarantia >= 1,
-          documentosOK: !!documentosCompletosBool
-        }
-      },
-      scorecard: {
-        pesos: {
-          capacidadPago: '35 pts',
-          congruenciaMontoPlazo: '20 pts',
-          garantia: '20 pts',
-          estabilidad: '15 pts',
-          contexto: '10 pts'
-        },
-        normalizacion: undefined
-      },
-      consideraciones: {
-        factoresMasPositivos: [
-          { factor: 'GARANTIA', detalle: `Cobertura ${(ratioGarantia * 100).toFixed(0)}%` }
-        ],
-        factoresMasNegativos: [
-          { factor: 'RATIO_CUOTA_INGRESO', detalle: `${(ratioCuotaIngresoSemanal * 100).toFixed(1)}%`, severidad: 'ALTA' }
-        ]
-      },
-      contraofertas: [
-        {
-          escenario: 'Reducir monto',
-          montoSugerido: Math.round(montoSolicitadoNum * 0.7),
-          plazoSemanas: tiempoSemanasNum,
-          objetivo: 'Bajar ratio cuota/ingreso'
-        },
-        {
-          escenario: 'Extender plazo',
-          monto: montoSolicitadoNum,
-          plazoSemanas: tiempoSemanasNum * 2,
-          objetivo: 'Bajar cuota mensual estimada'
-        }
-      ],
-      
-    });
-
-  } catch (error) {
-    console.error('❌ Error en cálculo de nuevo cliente:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error interno del servidor al procesar el análisis crediticio',
-      error: error.message,
-      timestamp: new Date().toISOString()
+  while (cuotaSemanal > capacidadPagoSemanal && plazoOfertaSemanas < 156) {
+    plazoOfertaSemanas += 1;
+    cuotaSemanal = calculateCuotaSemanal({
+      monto: montoSolicitado,
+      tasaSemanal: tasaInteresSemanal,
+      semanas: plazoOfertaSemanas,
+      tipoAmortizacion
     });
   }
-});
 
-// Middleware para medir tiempo de procesamiento
-router.use((req, res, next) => {
-  req.startTime = Date.now();
-  next();
-});
+  const paymentCapacityRatio = cuotaSemanal > 0 ? capacidadPagoSemanal / cuotaSemanal : 0;
 
-// Ruta adicional para obtener información de las variables
-router.get('/new-client/variables', authenticateToken, requirePermission('ratings.run'), (req, res) => {
+  const valorRealizableGarantia = round(valorGarantia * 0.7);
+  const recoveryRate = montoSolicitado > 0 ? Math.min(valorRealizableGarantia / montoSolicitado, 1) : 0;
+  const lgd = round(1 - recoveryRate, 4);
+  const expectedLoss = round(pd * lgd * montoSolicitado);
+
+  const razones = [];
+  let estado = 'REVISION';
+
+  const rechazar = (
+    ingresoNetoSemanal <= 0
+    || !documentosCompletos
+    || paymentCapacityRatio < 1
+    || pd >= 0.4
+    || cargaFinancieraSemanal > 0.65
+  );
+
+  if (rechazar) {
+    estado = 'RECHAZADO';
+    if (ingresoNetoSemanal <= 0) razones.push('Ingreso neto semanal no cubre obligaciones básicas');
+    if (!documentosCompletos) razones.push('Documentación incompleta');
+    if (paymentCapacityRatio < 1) razones.push('La cuota semanal supera la capacidad de pago');
+    if (pd >= 0.4) razones.push('Probabilidad de incumplimiento elevada');
+    if (cargaFinancieraSemanal > 0.65) razones.push('Carga financiera semanal excesiva');
+  } else {
+    const aprobar = (
+      pd < 0.25
+      && paymentCapacityRatio >= 1.2
+      && score >= 680
+      && ingresoNetoSemanal > 0
+      && documentosCompletos
+    );
+
+    if (aprobar) {
+      estado = 'APROBADO';
+      razones.push('Capacidad semanal sólida para cubrir la cuota');
+      razones.push('Riesgo controlado con PD por debajo de 25%');
+      razones.push('Score en rango aprobable');
+    } else {
+      estado = 'REVISION';
+      if (pd >= 0.25 && pd < 0.4) razones.push('PD en rango de revisión manual');
+      if (paymentCapacityRatio >= 1 && paymentCapacityRatio < 1.2) razones.push('Cobertura de pago semanal ajustada');
+      if (statusLegal !== 'FORMAL' && tieneGarantia) razones.push('Estatus legal no formal, mitigado con garantía');
+      if (score >= 620 && score < 680) razones.push('Score intermedio requiere validación adicional');
+      if (razones.length === 0) razones.push('Caso intermedio, requiere validación manual');
+    }
+  }
+
+  const montoMaximoSugerido = invertMontoFromCuota({
+    cuotaObjetivo: capacidadPagoSemanal,
+    tasaSemanal: tasaInteresSemanal,
+    semanas: plazoOfertaSemanas,
+    tipoAmortizacion
+  });
+
+  const montoAprobado = estado === 'APROBADO'
+    ? round(Math.min(montoSolicitado, montoMaximoSugerido))
+    : estado === 'REVISION'
+      ? round(Math.min(montoSolicitado * 0.9, montoMaximoSugerido))
+      : round(Math.min(montoSolicitado * 0.8, montoMaximoSugerido));
+
+  const cuotaOferta = calculateCuotaSemanal({
+    monto: montoAprobado,
+    tasaSemanal: tasaInteresSemanal,
+    semanas: plazoOfertaSemanas,
+    tipoAmortizacion
+  });
+
+  const totalPagarOferta = tipoAmortizacion === 'SIMPLE'
+    ? round(montoAprobado + montoAprobado * tasaInteresSemanal * plazoOfertaSemanas)
+    : round(cuotaOferta * plazoOfertaSemanas);
+
+  const features = {
+    ingresoNetoSemanal,
+    cargaFinancieraSemanal: round(cargaFinancieraSemanal, 4),
+    ratioGastosIngresoSemanal: round(ratioGastosIngresoSemanal, 4),
+    loanToIncomeSemanal: round(loanToIncomeSemanal, 4),
+    collateralCoverage: round(collateralCoverage, 4),
+    estabilidadLaboral: round(estabilidadLaboral, 4),
+    formalidad,
+    documentacion,
+    referido,
+    garantia,
+    viviendaScore
+  };
+
+  return {
+    inputNormalizado,
+    features,
+    riesgo: {
+      pd: round(pd, 4),
+      score,
+      rating
+    },
+    capacidadPago: {
+      factorPrudencia,
+      capacidadPagoSemanal,
+      cuotaSemanal: cuotaSemanal,
+      paymentCapacityRatio: round(paymentCapacityRatio, 4)
+    },
+    perdidaEsperada: {
+      ead: round(montoSolicitado),
+      lgd: round(lgd, 4),
+      expectedLoss
+    },
+    decision: {
+      estado,
+      razones
+    },
+    oferta: {
+      montoAprobado,
+      plazoSemanas: plazoOfertaSemanas,
+      tasaInteresSemanal: round(tasaInteresSemanal, 4),
+      tipoAmortizacion,
+      cuotaSemanal: cuotaOferta,
+      totalPagar: totalPagarOferta
+    },
+    // Compatibilidad parcial con consumo anterior del frontend
+    resumen: {
+      scoreFinal: score,
+      decision: estado,
+      aprobado: estado === 'APROBADO',
+      riesgoTotal: pd < 0.25 ? 'BAJO' : pd < 0.4 ? 'MODERADO' : 'ALTO',
+      montoSolicitado: round(montoSolicitado),
+      capacidadPagoSemanal
+    }
+  };
+};
+
+const handleEvaluate = (req, res) => {
+  try {
+    const result = evaluateWeeklyScoring(req.body || {});
+    res.locals.audit_metadata = {
+      tipo_reporte: 'SCORING_CLIENTE_NUEVO_SEMANAL',
+      estado: result.decision.estado,
+      pd: result.riesgo.pd,
+      score: result.riesgo.score
+    };
+    return res.json({
+      success: true,
+      message: 'Evaluación semanal generada correctamente',
+      timestamp: new Date().toISOString(),
+      ...result
+    });
+  } catch (error) {
+    const statusCode = error?.details ? 400 : 500;
+    return res.status(statusCode).json({
+      success: false,
+      message: error.message || 'Error interno evaluando scoring semanal',
+      errores: error?.details || undefined
+    });
+  }
+};
+
+router.post('/new-client', authenticateToken, requirePermission('ratings.run'), handleEvaluate);
+router.post('/evaluate-weekly', authenticateToken, requirePermission('ratings.run'), handleEvaluate);
+
+router.get('/new-client/variables', authenticateToken, requirePermission('ratings.run'), (_req, res) => {
   res.json({
     success: true,
+    message: 'Variables del modelo semanal de cliente nuevo',
     variables: {
-      edad: {
-        descripcion: 'Edad del cliente en años',
-        rango: '18-80',
-        impacto: 'Alto',
-        optimo: '25-50 años'
-      },
-      sexo: {
-        descripcion: 'Género del cliente',
-        valores: ['M', 'F'],
-        impacto: 'Bajo',
-        nota: 'Diferencias estadísticas en comportamiento de pago'
-      },
-      tiempoSemanas: {
-        descripcion: 'Plazo del préstamo solicitado en semanas',
-        rango: '4-208 semanas (1 mes - 4 años)',
-        impacto: 'Moderado-Alto',
-        calculo: 'Evalúa congruencia con monto e ingresos',
-        recomendacion: 'Plazo debe permitir cuota ≤ 30% de ingresos mensuales'
-      },
-      objetivoPrestamo: {
-        descripcion: 'Finalidad del préstamo',
-        valores: ['pago_deuda', 'inversion', 'consumo', 'emergencia', 'otros'],
-        impacto: 'Moderado',
-        mejores: ['inversion', 'pago_deuda']
-      },
-      esReferido: {
-        descripcion: 'Si el cliente fue referido por otro',
-        tipo: 'boolean',
-        impacto: 'Moderado',
-        beneficio: '+5 puntos en score'
-      },
-      tieneGarantia: {
-        descripcion: 'Si el cliente ofrece garantía',
-        tipo: 'boolean',
-        impacto: 'Alto',
-        nota: 'Garantías reales (propiedades, vehículos) mejoran score'
-      },
-      montoGarantia: {
-        descripcion: 'Valor de la garantía ofrecida',
-        tipo: 'number',
-        impacto: 'Alto',
-        recomendacion: 'Mínimo 50% del monto solicitado'
-      },
-      montoSolicitado: {
-        descripcion: 'Monto del préstamo solicitado',
-        tipo: 'number',
-        impacto: 'Crítico',
-        relacion: 'No debe exceder 30% de ingresos anuales'
-      },
-      ingresosMensuales: {
-        descripcion: 'Ingresos mensuales del cliente',
-        tipo: 'number',
-        impacto: 'Crítico',
-        calculo: 'Base para capacidad de pago'
-      },
-      statusLegal: {
-        descripcion: 'Estatus legal del cliente',
-        valores: ['FORMAL', 'EN_REGLA', 'RESIDENTE', 'TEMPORAL', 'IRREGULAR'],
-        impacto: 'Alto',
-        calculo: 'Ajusta la capacidad de pago con factor de riesgo legal'
-      },
-      tiempoTrabajo: {
-        descripcion: 'Tiempo de trabajo en meses',
-        tipo: 'number',
-        impacto: 'Alto',
-        calculo: 'A mayor antigüedad laboral, mayor estabilidad'
-      },
-      casaPropiaAlquiler: {
-        descripcion: 'Tipo de vivienda',
-        valores: ['PROPIA', 'ALQUILER'],
-        impacto: 'Moderado',
-        calculo: 'Vivienda propia reduce riesgo'
-      },
-      montoAuto: {
-        descripcion: 'Valor del auto del cliente',
-        tipo: 'number',
-        impacto: 'Informativo',
-        calculo: 'Se usa como contexto patrimonial'
-      },
-      pagoAuto: {
-        descripcion: 'Pago mensual del auto',
-        tipo: 'number',
-        impacto: 'Alto',
-        calculo: 'Se descuenta del ingreso disponible mensual'
-      },
-      gastosMensualesEstimados: {
-        descripcion: 'Estimado de gastos mensuales',
-        tipo: 'number',
-        impacto: 'Crítico',
-        calculo: 'Se descuenta del ingreso disponible'
-      },
-      deudasActualesPagosMinimos: {
-        descripcion: 'Suma de pagos mínimos de deudas actuales',
-        tipo: 'number',
-        impacto: 'Crítico',
-        calculo: 'Se descuenta del ingreso disponible'
-      },
-      valorGarantia: {
-        descripcion: 'Valor de garantía declarado para capacidad de respaldo',
-        tipo: 'number',
-        impacto: 'Alto',
-        calculo: 'Se toma como prioridad frente a montoGarantia'
-      }
-    },
-    metricas: {
-      scoreMinimoAprobacion: 50,
-      scoreOptimo: '80+',
-      factoresPrioritarios: ['Capacidad de pago', 'Garantía', 'Congruencia Monto-Plazo'],
-      plazoMaximoRecomendado: 'Cuota mensual ≤ 30% de ingresos',
-      metodologia: 'Sistema de puntuación ponderada (0-100 puntos)'
+      obligatorias: ['edad', 'sexo', 'tiempoSemanas', 'montoSolicitado', 'ingresosMensuales'],
+      opcionales: [
+        'objetivoPrestamo',
+        'esReferido',
+        'tieneGarantia',
+        'antiguedadLaboralMeses',
+        'statusLegal',
+        'tiempoTrabajo',
+        'tiempo_trabajo',
+        'casaPropiaAlquiler',
+        'pagoAutoMensual',
+        'gastosMensualesEstimados',
+        'deudasActualesPagosMinimosMensuales',
+        'valorGarantia',
+        'tipoAmortizacion'
+      ]
     }
   });
 });

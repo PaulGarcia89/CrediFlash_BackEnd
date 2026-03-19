@@ -61,6 +61,7 @@ app.use('/api', auditTrail, routes);
 // ✅ Ambas rutas bajo /api/ratings para mantener compatibilidad
 app.use('/api/ratings', ratingRoutes);     // Sistema de rating existente
 app.use('/api/ratings', newClientRoutes);  // Cálculo de nuevos clientes
+app.use('/api/v1/scoring', newClientRoutes); // Alias semanal unificado
 
 // ========== RUTA PRINCIPAL CON DOCUMENTACIÓN ==========
 app.get('/', (req, res) => {
