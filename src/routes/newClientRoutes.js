@@ -274,9 +274,6 @@ const evaluateWeeklyScoring = (body = {}) => {
   const features = {
     ingresoNetoSemanal,
     cargaFinancieraSemanal: round(cargaFinancieraSemanal, 4),
-    ratioGastosIngresoSemanal: round(ratioGastosIngresoSemanal, 4),
-    loanToIncomeSemanal: round(loanToIncomeSemanal, 4),
-    collateralCoverage: round(collateralCoverage, 4),
     estabilidadLaboral: round(estabilidadLaboral, 4),
     formalidad,
     documentacion,
@@ -337,7 +334,6 @@ const handleEvaluate = (req, res) => {
       score: result.riesgo.score
     };
     return res.json({
-      success: true,
       message: 'Evaluación semanal generada correctamente',
       timestamp: new Date().toISOString(),
       ...result
