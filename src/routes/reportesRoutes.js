@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const { PagoBancarioCargado } = require('../models');
 const { authenticateToken, requirePermission } = require('../middleware/auth');
 const reportesController = require('../controllers/reportesController');
+const { formatMMDDYYYY } = require('../utils/dateFormat');
 
 const router = express.Router();
 
@@ -106,6 +107,16 @@ const parseDateFilter = (value, endOfDay = false) => {
     date.setHours(0, 0, 0, 0);
   }
   return date;
+};
+
+const serializePagoBancario = (item) => {
+  const payload = item.toJSON ? item.toJSON() : item;
+  return {
+    ...payload,
+    fecha_pago: formatMMDDYYYY(payload.fecha_pago),
+    creado_en: formatMMDDYYYY(payload.creado_en),
+    actualizado_en: formatMMDDYYYY(payload.actualizado_en)
+  };
 };
 
 router.post(
@@ -316,7 +327,7 @@ router.get(
 
       return res.json({
         success: true,
-        data: rows,
+        data: rows.map(serializePagoBancario),
         pagination: {
           page,
           limit,
@@ -360,7 +371,7 @@ router.get(
 
       return res.json({
         success: true,
-        data: rows,
+        data: rows.map(serializePagoBancario),
         resumen
       });
     } catch (error) {

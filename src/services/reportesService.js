@@ -1,6 +1,7 @@
 const { Op } = require('sequelize');
 const { Cuota, Prestamo, Solicitud, Cliente } = require('../models');
 const { sendMailWithReportCsv } = require('../utils/emailNotificationService');
+const { formatMMDDYYYY } = require('../utils/dateFormat');
 
 const TIPOS_REPORTE = new Set([
   'ganancias-esperadas-cobradas',
@@ -20,7 +21,25 @@ const toNumber = (value) => {
 const round2 = (value) => Number(toNumber(value).toFixed(2));
 
 const toDate = (value) => {
-  const date = new Date(value);
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+
+  const text = String(value).trim();
+  const mmdd = text.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (mmdd) {
+    const [, mm, dd, yyyy] = mmdd;
+    const date = new Date(Number(yyyy), Number(mm) - 1, Number(dd));
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const ymd = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (ymd) {
+    const [, yyyy, mm, dd] = ymd;
+    const date = new Date(Number(yyyy), Number(mm) - 1, Number(dd));
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const date = new Date(text);
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
@@ -29,7 +48,7 @@ const buildDateRange = ({ fecha_inicio, fecha_fin }) => {
   const end = toDate(fecha_fin);
 
   if (!start || !end) {
-    throw new Error('fecha_inicio y fecha_fin deben tener formato YYYY-MM-DD');
+    throw new Error('fecha_inicio y fecha_fin deben tener formato MM/DD/YYYY');
   }
 
   start.setHours(0, 0, 0, 0);
@@ -88,7 +107,16 @@ const calculateMora = (cuota, today) => {
 const formatDate = (value) => {
   const date = toDate(value);
   if (!date) return null;
-  return date.toISOString().slice(0, 10);
+  return formatMMDDYYYY(date);
+};
+
+const toDbDateString = (value) => {
+  const date = toDate(value);
+  if (!date) return null;
+  const yyyy = String(date.getFullYear());
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
 };
 
 const getBaseIncludes = () => ([
@@ -160,7 +188,7 @@ const generarGananciasEsperadasCobradas = async ({ start, end }) => {
 const generarSaldoPendienteCliente = async ({ start, end }) => {
   const cuotas = await Cuota.findAll({
     where: {
-      fecha_vencimiento: { [Op.between]: [formatDate(start), formatDate(end)] }
+      fecha_vencimiento: { [Op.between]: [toDbDateString(start), toDbDateString(end)] }
     },
     include: getBaseIncludes(),
     attributes: ['id', 'prestamo_id', 'monto_total', 'monto_pagado', 'estado']
@@ -218,7 +246,7 @@ const generarMorasHistorialPagos = async ({ start, end }) => {
   const today = new Date();
   const cuotas = await Cuota.findAll({
     where: {
-      fecha_vencimiento: { [Op.between]: [formatDate(start), formatDate(end)] }
+      fecha_vencimiento: { [Op.between]: [toDbDateString(start), toDbDateString(end)] }
     },
     include: getBaseIncludes(),
     attributes: ['id', 'prestamo_id', 'fecha_vencimiento', 'fecha_pago', 'monto_total', 'monto_pagado', 'estado', 'observaciones']
@@ -280,7 +308,7 @@ const calcularKpisPeriodo = async ({ start, end }) => {
 
   const cuotasMora = await Cuota.findAll({
     where: {
-      fecha_vencimiento: { [Op.between]: [formatDate(start), formatDate(end)] },
+      fecha_vencimiento: { [Op.between]: [toDbDateString(start), toDbDateString(end)] },
       estado: { [Op.in]: ['PENDIENTE', 'EN_MORA', 'PARCIAL'] }
     },
     attributes: ['id', 'monto_total', 'monto_pagado', 'fecha_vencimiento', 'fecha_pago']
@@ -423,7 +451,7 @@ const generarTopMorasDiarias = async ({ start, end, top }) => {
   const today = new Date();
   const cuotas = await Cuota.findAll({
     where: {
-      fecha_vencimiento: { [Op.between]: [formatDate(start), formatDate(end)] },
+      fecha_vencimiento: { [Op.between]: [toDbDateString(start), toDbDateString(end)] },
       estado: { [Op.in]: ['PENDIENTE', 'EN_MORA', 'PARCIAL'] }
     },
     attributes: ['id', 'fecha_vencimiento', 'monto_total', 'monto_pagado', 'fecha_pago']
@@ -500,7 +528,7 @@ const generarCuotasPendientesCorreoAdmin = async ({ start, end, adminEmail }) =>
   const today = new Date();
   const cuotas = await Cuota.findAll({
     where: {
-      fecha_vencimiento: { [Op.between]: [formatDate(start), formatDate(end)] },
+      fecha_vencimiento: { [Op.between]: [toDbDateString(start), toDbDateString(end)] },
       estado: { [Op.in]: ['PENDIENTE', 'EN_MORA', 'PARCIAL'] }
     },
     include: getBaseIncludes(),
@@ -544,7 +572,7 @@ const generarCuotasPendientesCorreoAdmin = async ({ start, end, adminEmail }) =>
       total_cuotas_pendientes: totalPendientes,
       total_en_mora: totalMora,
       enviado: true,
-      enviado_en: new Date().toISOString(),
+      enviado_en: formatDate(new Date()),
       message_id: mailResult?.messageId || null
     },
     columns: [
