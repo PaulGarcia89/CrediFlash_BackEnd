@@ -9,8 +9,7 @@ const TIPOS_REPORTE = new Set([
   'moras-historial-pagos',
   'ano-contra-ano',
   'metas',
-  'top-moras-diarias',
-  'cuotas-pendientes-correo-admin'
+  'top-moras-diarias'
 ]);
 
 const toNumber = (value) => {
@@ -628,14 +627,13 @@ const withPagination = (rows = [], page = 1, limit = 1000) => {
   };
 };
 
-const generarReporte = async ({ tipo, filtros, user }) => {
+const generarReporte = async ({ tipo, filtros }) => {
   if (!TIPOS_REPORTE.has(tipo)) {
-    throw new Error('tipo inválido. Valores permitidos: ganancias-esperadas-cobradas, saldo-pendiente-cliente, moras-historial-pagos, ano-contra-ano, metas, top-moras-diarias, cuotas-pendientes-correo-admin');
+    throw new Error('tipo inválido. Valores permitidos: ganancias-esperadas-cobradas, saldo-pendiente-cliente, moras-historial-pagos, ano-contra-ano, metas, top-moras-diarias');
   }
 
   const { start, end } = buildDateRange(filtros);
   const top = Math.max(parseInt(filtros.top || '10', 10), 1);
-  const adminEmail = process.env.REPORTES_ADMIN_EMAIL || process.env.SMTP_BCC || process.env.SMTP_USER || 'creditflashadmin@gmail.com';
 
   let response;
   if (tipo === 'ganancias-esperadas-cobradas') {
@@ -655,8 +653,6 @@ const generarReporte = async ({ tipo, filtros, user }) => {
     });
   } else if (tipo === 'top-moras-diarias') {
     response = await generarTopMorasDiarias({ top });
-  } else if (tipo === 'cuotas-pendientes-correo-admin') {
-    response = await generarCuotasPendientesCorreoAdmin({ start, end, adminEmail, user });
   } else {
     throw new Error('tipo de reporte no soportado');
   }
