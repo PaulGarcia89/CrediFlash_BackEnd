@@ -78,8 +78,14 @@ const getRatingFromScore = (score) => {
 };
 
 const evaluateWeeklyScoring = (body = {}) => {
-  const edad = toNumber(body.edad, NaN);
-  const sexo = String(body.sexo || '').toUpperCase();
+  const edadRaw = body.edad;
+  const edadProvided = edadRaw !== undefined && edadRaw !== null && String(edadRaw).trim() !== '';
+  const edadParsed = Number(edadRaw);
+  const edad = edadProvided && Number.isFinite(edadParsed) ? edadParsed : 30;
+
+  const sexoRaw = String(body.sexo || '').toUpperCase();
+  const sexo = ['M', 'F'].includes(sexoRaw) ? sexoRaw : 'M';
+  const sexoProvided = sexoRaw !== '';
   const tiempoSemanas = toNumber(body.tiempoSemanas, NaN);
   const objetivoPrestamo = String(body.objetivoPrestamo || '').toLowerCase();
   const esReferido = parseBoolean(body.esReferido);
@@ -98,8 +104,12 @@ const evaluateWeeklyScoring = (body = {}) => {
   const valorGarantia = toNumber(getAliasValue(body, ['valorGarantia', 'valor_garantia'], 0), 0);
 
   const errores = [];
-  if (!Number.isFinite(edad) || edad < 18 || edad > 80) errores.push('edad debe estar entre 18 y 80');
-  if (!['M', 'F'].includes(sexo)) errores.push('sexo debe ser M o F');
+  if (edadProvided && (!Number.isFinite(edadParsed) || edadParsed < 18 || edadParsed > 80)) {
+    errores.push('edad debe estar entre 18 y 80');
+  }
+  if (sexoProvided && !['M', 'F'].includes(sexoRaw)) {
+    errores.push('sexo debe ser M o F');
+  }
   if (!Number.isFinite(tiempoSemanas) || tiempoSemanas < 4 || tiempoSemanas > 208) errores.push('tiempoSemanas debe estar entre 4 y 208');
   if (!Number.isFinite(montoSolicitado) || montoSolicitado <= 0) errores.push('montoSolicitado debe ser mayor a 0');
   if (!Number.isFinite(ingresosMensuales) || ingresosMensuales <= 0) errores.push('ingresosMensuales debe ser mayor a 0');
