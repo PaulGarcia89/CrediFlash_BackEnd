@@ -286,7 +286,7 @@ const evaluateWeeklyScoring = (body = {}) => {
     inputNormalizado,
     features,
     riesgo: {
-      probaIncum: round(pd, 4),
+      pd: round(pd, 4),
       score,
       rating
     },
@@ -297,7 +297,8 @@ const evaluateWeeklyScoring = (body = {}) => {
       paymentCapacityRatio: round(paymentCapacityRatio, 4)
     },
     perdidaEsperada: {
-      montoCredito: round(montoSolicitado),
+      ead: round(montoSolicitado),
+      lgd: round(lgd, 4),
       expectedLoss
     },
     decision: {
@@ -329,7 +330,7 @@ const handleEvaluate = (req, res) => {
     res.locals.audit_metadata = {
       tipo_reporte: 'SCORING_CLIENTE_NUEVO_SEMANAL',
       estado: result.decision.estado,
-      pd: result.riesgo.probaIncum,
+      pd: result.riesgo.pd,
       score: result.riesgo.score
     };
     return res.json({
