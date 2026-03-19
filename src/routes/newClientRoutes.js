@@ -43,20 +43,12 @@ const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 
 const toWeekly = (monthlyValue) => monthlyValue * WEEKLY_FACTOR;
 
-const calculateCuotaSemanal = ({ monto, tasaSemanal, semanas, tipoAmortizacion }) => {
+const calculateCuotaSemanal = ({ monto, tasaSemanal, semanas }) => {
   const n = Math.max(Math.floor(toNumber(semanas, 0)), 1);
   const principal = Math.max(toNumber(monto, 0), 0);
   const rate = Math.max(toNumber(tasaSemanal, 0), 0);
-  const tipo = String(tipoAmortizacion || 'SIMPLE').toUpperCase();
 
   if (principal <= 0) return 0;
-
-  if (tipo === 'FRANCES') {
-    if (rate === 0) return round(principal / n);
-    const factor = Math.pow(1 + rate, n);
-    const cuota = principal * ((rate * factor) / (factor - 1));
-    return round(cuota);
-  }
 
   const interesTotal = principal * rate * n;
   return round((principal + interesTotal) / n);
@@ -68,20 +60,12 @@ const inferRateByPd = (pd) => {
   return 0.012;
 };
 
-const invertMontoFromCuota = ({ cuotaObjetivo, tasaSemanal, semanas, tipoAmortizacion }) => {
+const invertMontoFromCuota = ({ cuotaObjetivo, tasaSemanal, semanas }) => {
   const cuota = Math.max(toNumber(cuotaObjetivo, 0), 0);
   const n = Math.max(Math.floor(toNumber(semanas, 0)), 1);
   const r = Math.max(toNumber(tasaSemanal, 0), 0);
-  const tipo = String(tipoAmortizacion || 'SIMPLE').toUpperCase();
 
   if (cuota <= 0) return 0;
-
-  if (tipo === 'FRANCES') {
-    if (r === 0) return round(cuota * n);
-    const factor = Math.pow(1 + r, n);
-    const monto = cuota * ((factor - 1) / (r * factor));
-    return round(monto);
-  }
 
   return round((cuota * n) / (1 + r * n));
 };
@@ -102,7 +86,6 @@ const evaluateWeeklyScoring = (body = {}) => {
   const tieneGarantia = parseBoolean(body.tieneGarantia);
   const montoSolicitado = toNumber(body.montoSolicitado, NaN);
   const ingresosMensuales = toNumber(body.ingresosMensuales, NaN);
-  const egresosMensuales = toNumber(body.egresosMensuales, 0);
   const otrasDeudasMensuales = toNumber(body.otrasDeudasMensuales, 0);
   const documentosCompletos = parseBoolean(body.documentosCompletos);
   const statusLegal = String(getAliasValue(body, ['statusLegal', 'status_legal'], 'NO_ESPECIFICADO')).toUpperCase();
@@ -112,8 +95,7 @@ const evaluateWeeklyScoring = (body = {}) => {
   const pagoAutoMensual = toNumber(getAliasValue(body, ['pagoAutoMensual', 'pagoAuto', 'pago_auto'], 0), 0);
   const gastosMensualesEstimados = toNumber(getAliasValue(body, ['gastosMensualesEstimados', 'estimados_gastos_mensuales'], 0), 0);
   const deudasActualesPagosMinimosMensuales = toNumber(getAliasValue(body, ['deudasActualesPagosMinimosMensuales', 'deudasActualesPagosMinimos', 'deudas_actuales_pagos_minimos'], 0), 0);
-  const valorGarantia = toNumber(getAliasValue(body, ['valorGarantia', 'valor_garantia', 'montoGarantia'], 0), 0);
-  const tipoAmortizacion = String(body.tipoAmortizacion || 'SIMPLE').toUpperCase();
+  const valorGarantia = toNumber(getAliasValue(body, ['valorGarantia', 'valor_garantia'], 0), 0);
 
   const errores = [];
   if (!Number.isFinite(edad) || edad < 18 || edad > 80) errores.push('edad debe estar entre 18 y 80');
@@ -121,7 +103,6 @@ const evaluateWeeklyScoring = (body = {}) => {
   if (!Number.isFinite(tiempoSemanas) || tiempoSemanas < 4 || tiempoSemanas > 208) errores.push('tiempoSemanas debe estar entre 4 y 208');
   if (!Number.isFinite(montoSolicitado) || montoSolicitado <= 0) errores.push('montoSolicitado debe ser mayor a 0');
   if (!Number.isFinite(ingresosMensuales) || ingresosMensuales <= 0) errores.push('ingresosMensuales debe ser mayor a 0');
-  if (!['SIMPLE', 'FRANCES'].includes(tipoAmortizacion)) errores.push('tipoAmortizacion debe ser SIMPLE o FRANCES');
   if (tiempoTrabajo < 0) errores.push('tiempoTrabajo debe ser un número mayor o igual a 0');
   if (errores.length > 0) {
     const error = new Error('Errores de validación');
@@ -131,7 +112,6 @@ const evaluateWeeklyScoring = (body = {}) => {
 
   const inputNormalizado = {
     ingresosSemanales: round(toWeekly(ingresosMensuales)),
-    egresosSemanales: round(toWeekly(egresosMensuales)),
     otrasDeudasSemanales: round(toWeekly(otrasDeudasMensuales)),
     pagoAutoSemanal: round(toWeekly(pagoAutoMensual)),
     gastosSemanalesEstimados: round(toWeekly(gastosMensualesEstimados)),
@@ -140,7 +120,6 @@ const evaluateWeeklyScoring = (body = {}) => {
 
   const ingresoNetoSemanal = round(
     inputNormalizado.ingresosSemanales
-    - inputNormalizado.egresosSemanales
     - inputNormalizado.otrasDeudasSemanales
     - inputNormalizado.pagoAutoSemanal
     - inputNormalizado.gastosSemanalesEstimados
@@ -158,7 +137,7 @@ const evaluateWeeklyScoring = (body = {}) => {
 
   const ratioGastosIngresoSemanal = inputNormalizado.ingresosSemanales > 0
     ? (
-      (inputNormalizado.egresosSemanales + inputNormalizado.gastosSemanalesEstimados)
+      (inputNormalizado.gastosSemanalesEstimados)
       / inputNormalizado.ingresosSemanales
     )
     : 0;
@@ -211,8 +190,7 @@ const evaluateWeeklyScoring = (body = {}) => {
   let cuotaSemanal = calculateCuotaSemanal({
     monto: montoSolicitado,
     tasaSemanal: tasaInteresSemanal,
-    semanas: plazoOfertaSemanas,
-    tipoAmortizacion
+    semanas: plazoOfertaSemanas
   });
 
   while (cuotaSemanal > capacidadPagoSemanal && plazoOfertaSemanas < 156) {
@@ -220,8 +198,7 @@ const evaluateWeeklyScoring = (body = {}) => {
     cuotaSemanal = calculateCuotaSemanal({
       monto: montoSolicitado,
       tasaSemanal: tasaInteresSemanal,
-      semanas: plazoOfertaSemanas,
-      tipoAmortizacion
+      semanas: plazoOfertaSemanas
     });
   }
 
@@ -277,8 +254,7 @@ const evaluateWeeklyScoring = (body = {}) => {
   const montoMaximoSugerido = invertMontoFromCuota({
     cuotaObjetivo: capacidadPagoSemanal,
     tasaSemanal: tasaInteresSemanal,
-    semanas: plazoOfertaSemanas,
-    tipoAmortizacion
+    semanas: plazoOfertaSemanas
   });
 
   const montoAprobado = estado === 'APROBADO'
@@ -290,13 +266,10 @@ const evaluateWeeklyScoring = (body = {}) => {
   const cuotaOferta = calculateCuotaSemanal({
     monto: montoAprobado,
     tasaSemanal: tasaInteresSemanal,
-    semanas: plazoOfertaSemanas,
-    tipoAmortizacion
+    semanas: plazoOfertaSemanas
   });
 
-  const totalPagarOferta = tipoAmortizacion === 'SIMPLE'
-    ? round(montoAprobado + montoAprobado * tasaInteresSemanal * plazoOfertaSemanas)
-    : round(cuotaOferta * plazoOfertaSemanas);
+  const totalPagarOferta = round(montoAprobado + montoAprobado * tasaInteresSemanal * plazoOfertaSemanas);
 
   const features = {
     ingresoNetoSemanal,
@@ -339,7 +312,6 @@ const evaluateWeeklyScoring = (body = {}) => {
       montoAprobado,
       plazoSemanas: plazoOfertaSemanas,
       tasaInteresSemanal: round(tasaInteresSemanal, 4),
-      tipoAmortizacion,
       cuotaSemanal: cuotaOferta,
       totalPagar: totalPagarOferta
     },
@@ -401,8 +373,7 @@ router.get('/new-client/variables', authenticateToken, requirePermission('rating
         'pagoAutoMensual',
         'gastosMensualesEstimados',
         'deudasActualesPagosMinimosMensuales',
-        'valorGarantia',
-        'tipoAmortizacion'
+        'valorGarantia'
       ]
     }
   });
