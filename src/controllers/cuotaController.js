@@ -413,6 +413,13 @@ const cuotaController = {
       });
 
       if (!cuota) {
+        res.locals.audit_metadata = {
+          accion: 'NOTIFICAR_EMAIL_MANUAL',
+          cuota_id: id,
+          canal: 'EMAIL',
+          resultado: 'ERROR',
+          detalle_error: 'Cuota no encontrada'
+        };
         return res.status(404).json({
           success: false,
           message: 'Cuota no encontrada'
@@ -421,6 +428,14 @@ const cuotaController = {
 
       const cliente = cuota?.prestamo?.solicitud?.cliente;
       if (!cliente || !cliente.email) {
+        res.locals.audit_metadata = {
+          accion: 'NOTIFICAR_EMAIL_MANUAL',
+          prestamo_id: cuota.prestamo_id,
+          cuota_id: cuota.id,
+          canal: 'EMAIL',
+          resultado: 'ERROR',
+          detalle_error: 'Cliente sin correo electrónico'
+        };
         return res.status(400).json({
           success: false,
           message: 'El cliente no tiene correo electrónico registrado'
@@ -452,16 +467,32 @@ const cuotaController = {
         observaciones: mergeObservacion(cuota.observaciones, `Notificación manual por correo enviada el ${new Date().toISOString()}`)
       });
 
+      res.locals.audit_metadata = {
+        accion: 'NOTIFICAR_EMAIL_MANUAL',
+        prestamo_id: cuota.prestamo_id,
+        cuota_id: cuota.id,
+        canal: 'EMAIL',
+        resultado: 'SUCCESS'
+      };
+
       return res.json({
         success: true,
-        message: '✅ Notificación enviada por correo',
+        message: '✅ Notificación enviada',
         data: {
-          cuota_id: cuota.id,
-          cliente_email: cliente.email
+          prestamo_id: cuota.prestamo_id,
+          canal: 'EMAIL'
         }
       });
     } catch (error) {
       console.error('❌ Error en enviarNotificacionEmailManual:', error);
+      res.locals.audit_metadata = {
+        accion: 'NOTIFICAR_EMAIL_MANUAL',
+        prestamo_id: req.params?.prestamoId || null,
+        cuota_id: req.params?.id || null,
+        canal: 'EMAIL',
+        resultado: 'ERROR',
+        detalle_error: error.message
+      };
       return res.status(500).json({
         success: false,
         message: 'Error al enviar notificación por correo',
@@ -496,6 +527,13 @@ const cuotaController = {
       });
 
       if (!cuota) {
+        res.locals.audit_metadata = {
+          accion: 'NOTIFICAR_EMAIL_MANUAL',
+          prestamo_id: prestamoId,
+          canal: 'EMAIL',
+          resultado: 'ERROR',
+          detalle_error: 'No hay cuotas pendientes para este préstamo'
+        };
         return res.status(404).json({
           success: false,
           message: 'No hay cuotas pendientes para este préstamo'
@@ -504,6 +542,14 @@ const cuotaController = {
 
       const cliente = cuota?.prestamo?.solicitud?.cliente;
       if (!cliente || !cliente.email) {
+        res.locals.audit_metadata = {
+          accion: 'NOTIFICAR_EMAIL_MANUAL',
+          prestamo_id: prestamoId,
+          cuota_id: cuota.id,
+          canal: 'EMAIL',
+          resultado: 'ERROR',
+          detalle_error: 'Cliente sin correo electrónico'
+        };
         return res.status(400).json({
           success: false,
           message: 'El cliente no tiene correo electrónico registrado'
@@ -535,20 +581,119 @@ const cuotaController = {
         observaciones: mergeObservacion(cuota.observaciones, `Notificación manual por correo enviada el ${new Date().toISOString()}`)
       });
 
+      res.locals.audit_metadata = {
+        accion: 'NOTIFICAR_EMAIL_MANUAL',
+        prestamo_id: prestamoId,
+        cuota_id: cuota.id,
+        canal: 'EMAIL',
+        resultado: 'SUCCESS'
+      };
+
       return res.json({
         success: true,
-        message: '✅ Notificación enviada por correo',
+        message: '✅ Notificación enviada',
         data: {
-          cuota_id: cuota.id,
           prestamo_id: prestamoId,
-          cliente_email: cliente.email
+          canal: 'EMAIL'
         }
       });
     } catch (error) {
       console.error('❌ Error en enviarNotificacionEmailManualPorPrestamo:', error);
+      res.locals.audit_metadata = {
+        accion: 'NOTIFICAR_EMAIL_MANUAL',
+        prestamo_id: req.params?.prestamoId || null,
+        canal: 'EMAIL',
+        resultado: 'ERROR',
+        detalle_error: error.message
+      };
       return res.status(500).json({
         success: false,
         message: 'Error al enviar notificación por correo',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  },
+
+  // Enviar notificación manual por WhatsApp (placeholder protegido por permisos)
+  enviarNotificacionWhatsAppManualPorPrestamo: async (req, res) => {
+    try {
+      const { prestamoId } = req.params;
+      const cuota = await Cuota.findOne({
+        where: {
+          prestamo_id: prestamoId,
+          estado: 'PENDIENTE'
+        },
+        include: [
+          {
+            model: Prestamo,
+            as: 'prestamo',
+            include: [
+              {
+                model: Solicitud,
+                as: 'solicitud',
+                include: [{ model: Cliente, as: 'cliente', attributes: ['id', 'nombre', 'apellido', 'telefono'] }]
+              }
+            ]
+          }
+        ],
+        order: [['fecha_vencimiento', 'ASC']]
+      });
+
+      if (!cuota) {
+        res.locals.audit_metadata = {
+          accion: 'NOTIFICAR_WHATSAPP_MANUAL',
+          prestamo_id: prestamoId,
+          canal: 'WHATSAPP',
+          resultado: 'ERROR',
+          detalle_error: 'No hay cuotas pendientes para este préstamo'
+        };
+        return res.status(404).json({
+          success: false,
+          message: 'No hay cuotas pendientes para este préstamo'
+        });
+      }
+
+      const cliente = cuota?.prestamo?.solicitud?.cliente;
+      if (!cliente || !cliente.telefono) {
+        res.locals.audit_metadata = {
+          accion: 'NOTIFICAR_WHATSAPP_MANUAL',
+          prestamo_id: prestamoId,
+          cuota_id: cuota.id,
+          canal: 'WHATSAPP',
+          resultado: 'ERROR',
+          detalle_error: 'Cliente sin teléfono'
+        };
+        return res.status(400).json({
+          success: false,
+          message: 'El cliente no tiene número de teléfono registrado'
+        });
+      }
+
+      res.locals.audit_metadata = {
+        accion: 'NOTIFICAR_WHATSAPP_MANUAL',
+        prestamo_id: prestamoId,
+        cuota_id: cuota.id,
+        canal: 'WHATSAPP',
+        resultado: 'ERROR',
+        detalle_error: 'Canal WhatsApp no configurado en backend'
+      };
+
+      return res.status(501).json({
+        success: false,
+        message: 'Notificación por WhatsApp no configurada en backend'
+      });
+    } catch (error) {
+      console.error('❌ Error en enviarNotificacionWhatsAppManualPorPrestamo:', error);
+      res.locals.audit_metadata = {
+        accion: 'NOTIFICAR_WHATSAPP_MANUAL',
+        prestamo_id: req.params?.prestamoId || null,
+        canal: 'WHATSAPP',
+        resultado: 'ERROR',
+        detalle_error: error.message
+      };
+      return res.status(500).json({
+        success: false,
+        message: 'Error al enviar notificación por WhatsApp',
         error: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }

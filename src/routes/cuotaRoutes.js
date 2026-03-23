@@ -4,6 +4,20 @@ const router = express.Router();
 const cuotaController = require('../controllers/cuotaController');
 const { authenticateToken, requirePermission } = require('../middleware/auth');
 
+const withNotificationAuditContext = (canal) => (req, res, next) => {
+  const isPrestamoRoute = Boolean(req.params?.prestamoId);
+  res.locals.audit_action = canal === 'WHATSAPP'
+    ? 'NOTIFICAR_WHATSAPP_MANUAL'
+    : 'NOTIFICAR_EMAIL_MANUAL';
+  res.locals.audit_metadata = {
+    accion: res.locals.audit_action,
+    canal,
+    prestamo_id: isPrestamoRoute ? req.params?.prestamoId : null,
+    cuota_id: req.params?.id || null
+  };
+  next();
+};
+
 const validateJobToken = (req, res, next) => {
   const configuredToken = process.env.NOTIFICATIONS_JOB_TOKEN;
   const receivedToken = req.headers['x-job-token'];
@@ -60,15 +74,24 @@ router.post('/prestamos/generar-semanales', authenticateToken, requirePermission
 // Notificación manual por correo para una cuota
 router.post(
   '/:id/notificar-email',
+  withNotificationAuditContext('EMAIL'),
   authenticateToken,
-  requirePermission('prestamos.pay'),
+  requirePermission('notifications.send'),
   cuotaController.enviarNotificacionEmailManual
 );
 router.post(
   '/prestamo/:prestamoId/notificar-email',
+  withNotificationAuditContext('EMAIL'),
   authenticateToken,
-  requirePermission('prestamos.pay'),
+  requirePermission('notifications.send'),
   cuotaController.enviarNotificacionEmailManualPorPrestamo
+);
+router.post(
+  '/prestamo/:prestamoId/notificar-whatsapp',
+  withNotificationAuditContext('WHATSAPP'),
+  authenticateToken,
+  requirePermission('notifications.send'),
+  cuotaController.enviarNotificacionWhatsAppManualPorPrestamo
 );
 
 // Job de notificaciones automáticas 24h (se recomienda invocar por cron)

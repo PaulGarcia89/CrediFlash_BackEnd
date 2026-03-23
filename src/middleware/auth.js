@@ -123,9 +123,17 @@ const requirePermission = (...allowedPermissionCodes) => {
   };
 };
 
+const requireAnyPermission = (allowedPermissionCodes = []) => {
+  const normalized = Array.isArray(allowedPermissionCodes)
+    ? allowedPermissionCodes
+    : [allowedPermissionCodes];
+  return requirePermission(...normalized);
+};
+
 module.exports = {
   authenticateToken,
   requireRole,
   requirePermission,
+  requireAnyPermission,
   getAnalistaPermissionCodes
 };

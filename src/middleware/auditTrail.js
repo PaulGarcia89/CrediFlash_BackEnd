@@ -83,6 +83,8 @@ const inferAction = ({ method, endpoint, statusCode }) => {
   if (path.includes('/aprobar') || path.includes('/prestamos/solicitud/')) return isError ? 'Intento de aprobar solicitud fallido' : 'Aprobó solicitud y creó préstamo';
   if (path.includes('/rechazar')) return isError ? 'Intento de rechazo de solicitud fallido' : 'Rechazó solicitud';
   if (path.includes('/pago-semanal') || path.includes('/:id/pago')) return isError ? 'Intento de registrar pago fallido' : 'Registró pago';
+  if (path.includes('/notificar-email')) return 'NOTIFICAR_EMAIL_MANUAL';
+  if (path.includes('/notificar-whatsapp')) return 'NOTIFICAR_WHATSAPP_MANUAL';
   if (path.includes('/pagos-bancarios/cargar')) return isError ? 'CARGA_PAGOS_BANCARIOS_ERROR' : 'CARGA_PAGOS_BANCARIOS';
   if (path.includes('/reportes/generar')) return isError ? 'GENERACION_REPORTE_ERROR' : 'GENERACION_REPORTE';
   if (path.includes('/rol-acceso')) return isError ? 'Intento de asignación de rol fallido' : 'Asignó rol';
@@ -138,13 +140,13 @@ const auditTrail = (req, res, next) => {
       analista_email: req.user?.email || null,
       rol_nombre: req.user?.rol || null,
       modulo,
-      accion: inferAction({ method: req.method, endpoint: endpointTemplate, statusCode }),
+      accion: res.locals?.audit_action || inferAction({ method: req.method, endpoint: endpointTemplate, statusCode }),
       entidad,
       entidad_id: entityId,
       metodo_http: req.method,
       endpoint: endpointTemplate,
       status_code: statusCode,
-      resultado: statusCode >= 400 ? 'ERROR' : 'SUCCESS',
+      resultado: statusCode === 403 ? 'FORBIDDEN' : statusCode >= 400 ? 'ERROR' : 'SUCCESS',
       ip: req.ip || req.headers['x-forwarded-for'] || null,
       user_agent: toShortText(req.headers['user-agent'] || ''),
       request_id: req.request_id || null,
