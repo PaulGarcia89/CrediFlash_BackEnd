@@ -443,23 +443,11 @@ const cuotaController = {
       }
 
       const clienteNombre = `${cliente.nombre || ''} ${cliente.apellido || ''}`.trim() || 'Cliente';
-      const cuotasPendientes = await Cuota.count({
-        where: {
-          prestamo_id: cuota.prestamo_id,
-          estado: 'PENDIENTE'
-        }
-      });
-
       await sendCuotaReminderEmail({
         to: cliente.email,
         clienteNombre,
         fechaVencimiento: cuota.fecha_vencimiento,
-        montoTotal: cuota.monto_total,
-        cuotaId: cuota.id,
-        montoCredito: cuota?.prestamo?.monto_solicitado,
-        plazoSemanas: cuota?.prestamo?.num_semanas,
-        cuotasPendientes,
-        tasaInteres: cuota?.prestamo?.interes
+        montoTotal: cuota.monto_total
       });
 
       await cuota.update({
@@ -557,23 +545,11 @@ const cuotaController = {
       }
 
       const clienteNombre = `${cliente.nombre || ''} ${cliente.apellido || ''}`.trim() || 'Cliente';
-      const cuotasPendientes = await Cuota.count({
-        where: {
-          prestamo_id: cuota.prestamo_id,
-          estado: 'PENDIENTE'
-        }
-      });
-
       await sendCuotaReminderEmail({
         to: cliente.email,
         clienteNombre,
         fechaVencimiento: cuota.fecha_vencimiento,
-        montoTotal: cuota.monto_total,
-        cuotaId: cuota.id,
-        montoCredito: cuota?.prestamo?.monto_solicitado,
-        plazoSemanas: cuota?.prestamo?.num_semanas,
-        cuotasPendientes,
-        tasaInteres: cuota?.prestamo?.interes
+        montoTotal: cuota.monto_total
       });
 
       await cuota.update({
@@ -741,22 +717,11 @@ const cuotaController = {
           }
 
           const clienteNombre = `${cliente.nombre || ''} ${cliente.apellido || ''}`.trim() || 'Cliente';
-          const cuotasPendientes = await Cuota.count({
-            where: {
-              prestamo_id: cuota.prestamo_id,
-              estado: 'PENDIENTE'
-            }
-          });
           await sendCuotaReminderEmail({
             to: cliente.email,
             clienteNombre,
             fechaVencimiento: cuota.fecha_vencimiento,
-            montoTotal: cuota.monto_total,
-            cuotaId: cuota.id,
-            montoCredito: cuota?.prestamo?.monto_solicitado,
-            plazoSemanas: cuota?.prestamo?.num_semanas,
-            cuotasPendientes,
-            tasaInteres: cuota?.prestamo?.interes
+            montoTotal: cuota.monto_total
           });
 
           await cuota.update({
