@@ -8,6 +8,30 @@ const { Op } = require('sequelize');
 const { authenticateToken, requirePermission } = require('../middleware/auth');
 const { sendCsv } = require('../utils/exporter');
 
+const toMoneyNumber = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return Number(numeric.toFixed(2));
+};
+
+const resolveSaldoPendiente = (prestamo = {}) => {
+  const pendiente = toMoneyNumber(prestamo.pendiente);
+  if (pendiente !== null) return Math.max(pendiente, 0);
+
+  const totalPagar = toMoneyNumber(prestamo.total_pagar) || 0;
+  const pagado = toMoneyNumber(prestamo.pagado) || 0;
+  const byTotals = Number((totalPagar - pagado).toFixed(2));
+  if (byTotals > 0) return byTotals;
+
+  const pagosPendientes = Number(prestamo.pagos_pendientes);
+  const pagoSemanal = toMoneyNumber(prestamo.pagos_semanales);
+  if (Number.isFinite(pagosPendientes) && Number.isFinite(pagoSemanal)) {
+    return Math.max(Number((pagosPendientes * pagoSemanal).toFixed(2)), 0);
+  }
+
+  return 0;
+};
+
 const calcularFechaVencimiento = (fechaInicio, numSemanas) => {
   const fecha = new Date(fechaInicio);
   const semanas = parseInt(numSemanas) || 0;
@@ -396,6 +420,7 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
       return {
         ...raw,
         cliente_id: raw?.solicitud?.cliente_id || null,
+        saldo_pendiente: resolveSaldoPendiente(raw),
         contrato_credito_id: contratoDoc?.id || null,
         contrato_url: contratoDoc
           ? construirUrlDocumento(req, contratoDoc.id, 'inline')
@@ -417,6 +442,7 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
         pagos_hechos: item.pagos_hechos,
         pagos_pendientes: item.pagos_pendientes,
         pendiente: item.pendiente,
+        saldo_pendiente: item.saldo_pendiente,
         status: item.status,
         fecha_vencimiento: item.fecha_vencimiento,
         contrato: item.contrato
@@ -437,6 +463,7 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
           { key: 'pagos_hechos', label: 'pagos_hechos' },
           { key: 'pagos_pendientes', label: 'pagos_pendientes' },
           { key: 'pendiente', label: 'pendiente' },
+          { key: 'saldo_pendiente', label: 'saldo_pendiente' },
           { key: 'status', label: 'status' },
           { key: 'fecha_vencimiento', label: 'fecha_vencimiento' },
           { key: 'contrato', label: 'contrato' }

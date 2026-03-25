@@ -28,6 +28,30 @@ const timingSafeEqual = (left, right) => {
   }
 };
 
+const toMoneyNumber = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return Number(numeric.toFixed(2));
+};
+
+const resolveSaldoPendiente = (prestamo = {}) => {
+  const pendiente = toMoneyNumber(prestamo.pendiente);
+  if (pendiente !== null) return Math.max(pendiente, 0);
+
+  const totalPagar = toMoneyNumber(prestamo.total_pagar) || 0;
+  const pagado = toMoneyNumber(prestamo.pagado) || 0;
+  const byTotals = Number((totalPagar - pagado).toFixed(2));
+  if (byTotals > 0) return byTotals;
+
+  const pagosPendientes = Number(prestamo.pagos_pendientes);
+  const pagoSemanal = toMoneyNumber(prestamo.pagos_semanales);
+  if (Number.isFinite(pagosPendientes) && Number.isFinite(pagoSemanal)) {
+    return Math.max(Number((pagosPendientes * pagoSemanal).toFixed(2)), 0);
+  }
+
+  return 0;
+};
+
 const construirUrlDocumento = (req, rutaRelativa = '') => {
   const baseUrl = `${req.protocol}://${req.get('host')}`;
   const rutaNormalizada = String(rutaRelativa || '').replace(/\\/g, '/').replace(/^\/+/, '');
@@ -510,7 +534,8 @@ router.get('/:id/prestamos', authenticateToken, requirePermission('prestamos.vie
 
     const prestamos = rows.map((prestamo) => ({
       ...prestamo.toJSON(),
-      cliente_id: prestamo?.solicitud?.cliente_id || null
+      cliente_id: prestamo?.solicitud?.cliente_id || null,
+      saldo_pendiente: resolveSaldoPendiente(prestamo.toJSON())
     }));
 
     return res.json({
