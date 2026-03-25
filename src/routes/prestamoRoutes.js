@@ -290,11 +290,26 @@ const ensureCuotaFeeColumns = async () => {
   return true;
 };
 
+router.use(async (_req, res, next) => {
+  try {
+    await ensurePrestamoContratoColumn();
+    await ensurePrestamoReminderModeColumns();
+    return next();
+  } catch (error) {
+    console.error('Error asegurando columnas de préstamos:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error inicializando configuración de préstamos'
+    });
+  }
+});
+
 // GET /api/prestamos - Obtener todos los préstamos (paginado y filtrado)
 router.get('/', authenticateToken, requirePermission('prestamos.view'), async (req, res) => {
   try {
     await ensureSolicitudDocumentoSchema();
     await ensurePrestamoContratoColumn();
+    await ensurePrestamoReminderModeColumns();
     const {
       page = 1,
       limit = 20,

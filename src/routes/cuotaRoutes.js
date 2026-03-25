@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const cuotaController = require('../controllers/cuotaController');
 const { authenticateToken, requirePermission } = require('../middleware/auth');
+const { sequelize } = require('../models');
 
 const withNotificationAuditContext = (canal) => (req, res, next) => {
   const isPrestamoRoute = Boolean(req.params?.prestamoId);
@@ -38,6 +39,37 @@ const validateJobToken = (req, res, next) => {
 
   return next();
 };
+
+let cuotaFeeColumnsChecked = false;
+const ensureCuotaFeeColumns = async () => {
+  if (cuotaFeeColumnsChecked) return;
+  await sequelize.query(`
+    ALTER TABLE public.cuotas
+    ADD COLUMN IF NOT EXISTS monto_fee_acumulado numeric(15,2) NOT NULL DEFAULT 0
+  `);
+  await sequelize.query(`
+    ALTER TABLE public.cuotas
+    ADD COLUMN IF NOT EXISTS monto_penalizacion_acumulada numeric(15,2) NOT NULL DEFAULT 0
+  `);
+  await sequelize.query(`
+    ALTER TABLE public.cuotas
+    ADD COLUMN IF NOT EXISTS motivo_fee text NULL
+  `);
+  cuotaFeeColumnsChecked = true;
+};
+
+router.use(async (_req, res, next) => {
+  try {
+    await ensureCuotaFeeColumns();
+    return next();
+  } catch (error) {
+    console.error('Error asegurando columnas de cuotas:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error inicializando configuración de cuotas'
+    });
+  }
+});
 
 // ========== RUTAS PRINCIPALES ==========
 
