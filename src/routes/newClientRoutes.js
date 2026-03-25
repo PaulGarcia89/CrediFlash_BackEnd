@@ -98,7 +98,9 @@ const evaluateWeeklyScoring = (body = {}) => {
   const tiempoTrabajo = getNonNegativeAliasNumber(body, ['tiempoTrabajo', 'tiempo_trabajo', 'antiguedadLaboralMeses'], 'tiempoTrabajo', 0);
   const casaPropiaAlquiler = String(getAliasValue(body, ['casaPropiaAlquiler', 'casa_propia_alquiler'], 'OTRO')).toUpperCase();
   const montoAuto = toNumber(getAliasValue(body, ['montoAuto', 'monto_auto'], 0), 0);
-  const pagoAutoMensual = toNumber(getAliasValue(body, ['pagoAutoMensual', 'pagoAuto', 'pago_auto'], 0), 0);
+  const montoCasaMensual = toNumber(getAliasValue(body, ['montoCasaMensual', 'monto_casa_mensual'], 0), 0);
+  const pagoAutoMensualLegacy = toNumber(getAliasValue(body, ['pagoAutoMensual', 'pagoAuto', 'pago_auto'], 0), 0);
+  const gastoViviendaMensual = montoCasaMensual > 0 ? montoCasaMensual : pagoAutoMensualLegacy;
   const gastosMensualesEstimados = toNumber(getAliasValue(body, ['gastosMensualesEstimados', 'estimados_gastos_mensuales'], 0), 0);
   const deudasActualesPagosMinimosMensuales = toNumber(getAliasValue(body, ['deudasActualesPagosMinimosMensuales', 'deudasActualesPagosMinimos', 'deudas_actuales_pagos_minimos'], 0), 0);
   const valorGarantia = toNumber(getAliasValue(body, ['valorGarantia', 'valor_garantia'], 0), 0);
@@ -123,7 +125,8 @@ const evaluateWeeklyScoring = (body = {}) => {
   const inputNormalizado = {
     ingresosSemanales: round(toWeekly(ingresosMensuales)),
     otrasDeudasSemanales: round(toWeekly(otrasDeudasMensuales)),
-    pagoAutoSemanal: round(toWeekly(pagoAutoMensual)),
+    pagoAutoSemanal: round(toWeekly(gastoViviendaMensual)),
+    montoCasaSemanal: round(toWeekly(gastoViviendaMensual)),
     gastosSemanalesEstimados: round(toWeekly(gastosMensualesEstimados)),
     deudasActualesPagosMinimosSemanales: round(toWeekly(deudasActualesPagosMinimosMensuales))
   };
@@ -376,6 +379,8 @@ router.get('/new-client/variables', authenticateToken, requirePermission('rating
         'tiempoTrabajo',
         'tiempo_trabajo',
         'casaPropiaAlquiler',
+        'montoCasaMensual',
+        'monto_casa_mensual',
         'pagoAutoMensual',
         'gastosMensualesEstimados',
         'deudasActualesPagosMinimosMensuales',

@@ -51,11 +51,15 @@ const buscarClienteReferidor = async (referidoPor, transaction) => {
   if (!valor) return null;
 
   if (UUID_REGEX.test(valor)) {
-    return Cliente.findByPk(valor, { transaction });
+    return Cliente.findOne({
+      where: { id: valor, estado: 'ACTIVO' },
+      transaction
+    });
   }
 
   return Cliente.findOne({
     where: {
+      estado: 'ACTIVO',
       [Op.or]: [
         { email: valor.toLowerCase() },
         { telefono: valor },
@@ -581,6 +585,7 @@ router.post('/', authenticateToken, requirePermission('clientes.create'), async 
     }
 
     const referidoFlag = es_referido === true || es_referido === 'true' || es_referido === 1 || es_referido === '1';
+    const referidoPorValue = referidoFlag ? (String(referido_por || '').trim() || null) : null;
     const montoReferidoNumero = monto_referido !== undefined && monto_referido !== null && `${monto_referido}` !== ''
       ? parseFloat(monto_referido)
       : 0;
@@ -605,8 +610,8 @@ router.post('/', authenticateToken, requirePermission('clientes.create'), async 
         email_contacto,
         direccion_contacto,
         es_referido: referidoFlag,
-        referido_por: referido_por || null,
-        monto_referido: parseFloat(montoReferidoNumero.toFixed(2)),
+        referido_por: referidoPorValue,
+        monto_referido: parseFloat((referidoFlag ? montoReferidoNumero : 0).toFixed(2)),
         descuentos_referido_disponibles: referidoFlag && montoReferidoNumero > 0 ? 1 : 0,
         descuentos_referido_aplicados: 0,
         estado: estado || 'ACTIVO',
@@ -614,8 +619,8 @@ router.post('/', authenticateToken, requirePermission('clientes.create'), async 
         fecha_registro: new Date()
       }, { transaction });
 
-      if (referido_por) {
-        const referidor = await buscarClienteReferidor(referido_por, transaction);
+      if (referidoPorValue) {
+        const referidor = await buscarClienteReferidor(referidoPorValue, transaction);
         if (referidor && referidor.id !== nuevoCliente.id) {
           await referidor.update({
             descuentos_referido_disponibles: (parseInt(referidor.descuentos_referido_disponibles, 10) || 0) + 1
@@ -724,6 +729,8 @@ router.put('/:id', authenticateToken, requirePermission('clientes.edit'), async 
 
     if (updates.referido_por !== undefined && (updates.referido_por === '' || updates.referido_por === null)) {
       updates.referido_por = null;
+    } else if (updates.referido_por !== undefined) {
+      updates.referido_por = String(updates.referido_por).trim() || null;
     }
 
     if (updates.es_referido === false) {

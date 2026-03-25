@@ -19,6 +19,13 @@ const toNumber = (value) => {
 
 const round2 = (value) => Number(toNumber(value).toFixed(2));
 
+const toYmdString = (date) => {
+  const yyyy = String(date.getFullYear());
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+};
+
 const toDate = (value) => {
   if (!value) return null;
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
@@ -62,7 +69,17 @@ const buildDateRange = ({ fecha_inicio, fecha_fin }) => {
     throw new Error('El rango máximo permitido es de 24 meses');
   }
 
-  return { start, end };
+  const startYmd = toYmdString(start);
+  const endYmd = toYmdString(end);
+
+  return {
+    start,
+    end,
+    startYmd,
+    endYmd,
+    startTs: `${startYmd} 00:00:00`,
+    endTs: `${endYmd} 23:59:59.999`
+  };
 };
 
 const cuotaInteresCobrado = (cuota) => {
@@ -112,10 +129,7 @@ const formatDate = (value) => {
 const toDbDateString = (value) => {
   const date = toDate(value);
   if (!date) return null;
-  const yyyy = String(date.getFullYear());
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const dd = String(date.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
+  return toYmdString(date);
 };
 
 const getBaseIncludes = () => ([
@@ -138,15 +152,15 @@ const getBaseIncludes = () => ([
   }
 ]);
 
-const generarGananciasEsperadasCobradas = async ({ start, end }) => {
+const generarGananciasEsperadasCobradas = async ({ start, end, startTs, endTs }) => {
   const prestamos = await Prestamo.findAll({
-    where: { fecha_inicio: { [Op.between]: [start, end] } },
+    where: { fecha_inicio: { [Op.between]: [startTs, endTs] } },
     attributes: ['id', 'fecha_inicio', 'ganancias']
   });
 
   const cuotasPagadas = await Cuota.findAll({
     where: {
-      fecha_pago: { [Op.between]: [start, end] },
+      fecha_pago: { [Op.between]: [startTs, endTs] },
       monto_pagado: { [Op.gt]: 0 }
     },
     attributes: ['id', 'monto_total', 'monto_interes', 'monto_pagado', 'fecha_pago']
@@ -291,15 +305,15 @@ const generarMorasHistorialPagos = async ({ start, end }) => {
   };
 };
 
-const calcularKpisPeriodo = async ({ start, end }) => {
+const calcularKpisPeriodo = async ({ start, end, startTs, endTs }) => {
   const prestamos = await Prestamo.findAll({
-    where: { fecha_inicio: { [Op.between]: [start, end] } },
+    where: { fecha_inicio: { [Op.between]: [startTs, endTs] } },
     attributes: ['id', 'monto_solicitado']
   });
 
   const cuotasPagadas = await Cuota.findAll({
     where: {
-      fecha_pago: { [Op.between]: [start, end] },
+      fecha_pago: { [Op.between]: [startTs, endTs] },
       monto_pagado: { [Op.gt]: 0 }
     },
     attributes: ['id', 'monto_pagado']
@@ -314,7 +328,7 @@ const calcularKpisPeriodo = async ({ start, end }) => {
   });
 
   const solicitudes = await Solicitud.findAll({
-    where: { creado_en: { [Op.between]: [start, end] } },
+    where: { creado_en: { [Op.between]: [startTs, endTs] } },
     attributes: ['id', 'estado']
   });
 
@@ -342,13 +356,17 @@ const variacion = (actual, anterior) => {
 };
 
 const generarAnoContraAno = async ({ start, end }) => {
+  const startTs = `${toYmdString(start)} 00:00:00`;
+  const endTs = `${toYmdString(end)} 23:59:59.999`;
   const prevStart = new Date(start);
   prevStart.setFullYear(prevStart.getFullYear() - 1);
   const prevEnd = new Date(end);
   prevEnd.setFullYear(prevEnd.getFullYear() - 1);
+  const prevStartTs = `${toYmdString(prevStart)} 00:00:00`;
+  const prevEndTs = `${toYmdString(prevEnd)} 23:59:59.999`;
 
-  const actual = await calcularKpisPeriodo({ start, end });
-  const anterior = await calcularKpisPeriodo({ start: prevStart, end: prevEnd });
+  const actual = await calcularKpisPeriodo({ start, end, startTs, endTs });
+  const anterior = await calcularKpisPeriodo({ start: prevStart, end: prevEnd, startTs: prevStartTs, endTs: prevEndTs });
 
   const rows = [
     {
@@ -393,12 +411,12 @@ const generarAnoContraAno = async ({ start, end }) => {
   };
 };
 
-const generarMetas = async ({ start, end, meta_monto, meta_cantidad }) => {
+const generarMetas = async ({ start, end, startTs, endTs, meta_monto, meta_cantidad }) => {
   const metaMonto = toNumber(meta_monto);
   const metaCantidad = toNumber(meta_cantidad);
 
   const prestamos = await Prestamo.findAll({
-    where: { fecha_inicio: { [Op.between]: [start, end] } },
+    where: { fecha_inicio: { [Op.between]: [startTs, endTs] } },
     attributes: ['id', 'monto_solicitado']
   });
 
@@ -632,12 +650,12 @@ const generarReporte = async ({ tipo, filtros }) => {
     throw new Error('tipo inválido. Valores permitidos: ganancias-esperadas-cobradas, saldo-pendiente-cliente, moras-historial-pagos, ano-contra-ano, metas, top-moras-diarias');
   }
 
-  const { start, end } = buildDateRange(filtros);
+  const { start, end, startTs, endTs } = buildDateRange(filtros);
   const top = Math.max(parseInt(filtros.top || '10', 10), 1);
 
   let response;
   if (tipo === 'ganancias-esperadas-cobradas') {
-    response = await generarGananciasEsperadasCobradas({ start, end });
+    response = await generarGananciasEsperadasCobradas({ start, end, startTs, endTs });
   } else if (tipo === 'saldo-pendiente-cliente') {
     response = await generarSaldoPendienteCliente({ start, end });
   } else if (tipo === 'moras-historial-pagos') {
@@ -648,6 +666,8 @@ const generarReporte = async ({ tipo, filtros }) => {
     response = await generarMetas({
       start,
       end,
+      startTs,
+      endTs,
       meta_monto: filtros.meta_monto,
       meta_cantidad: filtros.meta_cantidad
     });
