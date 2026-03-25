@@ -100,6 +100,11 @@ router.post(
   validateJobToken,
   cuotaController.enviarNotificacionesEmailAutomaticas24h
 );
+router.post(
+  '/jobs/notificar-whatsapp-24h',
+  validateJobToken,
+  cuotaController.enviarNotificacionesWhatsAppAutomaticas24h
+);
 
 // Obtener cuotas vencidas
 router.get('/reportes/vencidas', authenticateToken, requirePermission('cuotas.view'), cuotaController.getCuotasVencidas);

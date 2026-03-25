@@ -10,6 +10,16 @@ const mergeObservacion = (prev, extra) => {
   return `${prev}\n${extra}`;
 };
 
+let reminderModeColumnsChecked = false;
+const ensureReminderModeColumns = async () => {
+  if (reminderModeColumnsChecked) return;
+  await Prestamo.sequelize.query(`
+    ALTER TABLE public.prestamos
+    ADD COLUMN IF NOT EXISTS recordatorio_whatsapp_modo character varying(20) NOT NULL DEFAULT 'AUTO'
+  `);
+  reminderModeColumnsChecked = true;
+};
+
 const cuotaController = {
   // Obtener todas las cuotas
   getAllCuotas: async (req, res) => {
@@ -594,6 +604,7 @@ const cuotaController = {
   enviarNotificacionWhatsAppManualPorPrestamo: async (req, res) => {
     try {
       const { prestamoId } = req.params;
+      await ensureReminderModeColumns();
       const cuota = await Cuota.findOne({
         where: {
           prestamo_id: prestamoId,
@@ -625,11 +636,29 @@ const cuotaController = {
         };
         return res.status(404).json({
           success: false,
-          message: 'No hay cuotas pendientes para este préstamo'
+          message: 'No hay cuotas pendientes para este préstamo',
+          code: 'NO_PENDING_INSTALLMENTS'
         });
       }
 
       const cliente = cuota?.prestamo?.solicitud?.cliente;
+      const reminderMode = String(cuota?.prestamo?.recordatorio_whatsapp_modo || 'AUTO').toUpperCase();
+      if (reminderMode === 'PAUSADO') {
+        res.locals.audit_metadata = {
+          accion: 'NOTIFICAR_WHATSAPP_MANUAL',
+          prestamo_id: prestamoId,
+          cuota_id: cuota.id,
+          canal: 'WHATSAPP',
+          resultado: 'FORBIDDEN',
+          detalle_error: 'Recordatorio WhatsApp en modo PAUSADO'
+        };
+        return res.status(403).json({
+          success: false,
+          message: 'No se permite enviar notificación de WhatsApp para este préstamo.',
+          code: 'REMINDER_SEND_NOT_ALLOWED'
+        });
+      }
+
       if (!cliente || !cliente.telefono) {
         res.locals.audit_metadata = {
           accion: 'NOTIFICAR_WHATSAPP_MANUAL',
@@ -641,7 +670,8 @@ const cuotaController = {
         };
         return res.status(400).json({
           success: false,
-          message: 'El cliente no tiene número de teléfono registrado'
+          message: 'El cliente no tiene número de teléfono registrado',
+          code: 'PAYMENT_RULE_VIOLATION'
         });
       }
 
@@ -755,6 +785,82 @@ const cuotaController = {
     }
   },
 
+  // Envío automático WhatsApp (placeholder): solo procesa préstamos en modo AUTO
+  enviarNotificacionesWhatsAppAutomaticas24h: async (req, res) => {
+    try {
+      await ensureReminderModeColumns();
+      const ahora = new Date();
+      const objetivo = new Date(ahora);
+      objetivo.setDate(objetivo.getDate() + 1);
+      const fechaObjetivo = objetivo.toISOString().slice(0, 10);
+
+      const cuotas = await Cuota.findAll({
+        where: {
+          estado: 'PENDIENTE',
+          fecha_vencimiento: fechaObjetivo
+        },
+        include: [
+          {
+            model: Prestamo,
+            as: 'prestamo',
+            include: [
+              {
+                model: Solicitud,
+                as: 'solicitud',
+                include: [{ model: Cliente, as: 'cliente', attributes: ['id', 'nombre', 'apellido', 'telefono'] }]
+              }
+            ]
+          }
+        ],
+        order: [['fecha_vencimiento', 'ASC']]
+      });
+
+      let elegibles = 0;
+      let omitidos = 0;
+      const detalles = [];
+
+      cuotas.forEach((cuota) => {
+        const modo = String(cuota?.prestamo?.recordatorio_whatsapp_modo || 'AUTO').toUpperCase();
+        if (modo !== 'AUTO') {
+          omitidos += 1;
+          detalles.push({
+            cuota_id: cuota.id,
+            prestamo_id: cuota.prestamo_id,
+            modo,
+            razon: 'Modo de recordatorio no elegible para envío automático'
+          });
+          return;
+        }
+
+        elegibles += 1;
+        detalles.push({
+          cuota_id: cuota.id,
+          prestamo_id: cuota.prestamo_id,
+          modo,
+          razon: 'Canal WhatsApp no configurado en backend'
+        });
+      });
+
+      return res.json({
+        success: true,
+        message: 'Proceso automático WhatsApp ejecutado',
+        resumen: {
+          encontradas: cuotas.length,
+          elegibles_auto: elegibles,
+          omitidas_por_modo: omitidos,
+          enviadas: 0
+        },
+        detalles
+      });
+    } catch (error) {
+      console.error('❌ Error en enviarNotificacionesWhatsAppAutomaticas24h:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Error ejecutando notificaciones automáticas de WhatsApp'
+      });
+    }
+  },
+
   // Generar cuotas SEMANALES para un préstamo
   generarCuotasSemanalesParaPrestamo: async (req, res) => {
     try {
@@ -774,7 +880,7 @@ const cuotaController = {
         return res.status(400).json({
           success: false,
           message: 'Este préstamo ya tiene cronograma activo. No se puede regenerar desde pago semanal.',
-          code: 'SCHEDULE_ALREADY_ACTIVE'
+          code: 'SCHEDULE_REGEN_NOT_ALLOWED_FROM_PAYMENT'
         });
       }
 

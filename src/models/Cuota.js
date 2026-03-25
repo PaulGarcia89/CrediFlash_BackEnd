@@ -45,6 +45,20 @@ const Cuota = sequelize.define('Cuota', {
     allowNull: true,
     defaultValue: 0
   },
+  monto_fee_acumulado: {
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: false,
+    defaultValue: 0
+  },
+  monto_penalizacion_acumulada: {
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: false,
+    defaultValue: 0
+  },
+  motivo_fee: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
   ultimo_recordatorio_email_enviado_en: {
     type: DataTypes.DATE,
     allowNull: true

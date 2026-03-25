@@ -237,6 +237,59 @@ const ensureClienteReferidosColumns = async () => {
   return true;
 };
 
+let prestamoReminderModeColumnsChecked = false;
+let prestamoReminderModeColumnsReady = false;
+const REMINDER_MODES = new Set(['AUTO', 'MANUAL', 'PAUSADO']);
+
+const ensurePrestamoReminderModeColumns = async () => {
+  if (prestamoReminderModeColumnsChecked) {
+    return prestamoReminderModeColumnsReady;
+  }
+
+  await sequelize.query(`
+    ALTER TABLE public.prestamos
+    ADD COLUMN IF NOT EXISTS recordatorio_whatsapp_modo character varying(20) NOT NULL DEFAULT 'AUTO'
+  `);
+  await sequelize.query(`
+    ALTER TABLE public.prestamos
+    ADD COLUMN IF NOT EXISTS recordatorio_whatsapp_actualizado_en timestamp without time zone NULL
+  `);
+  await sequelize.query(`
+    ALTER TABLE public.prestamos
+    ADD COLUMN IF NOT EXISTS recordatorio_whatsapp_actualizado_por uuid NULL
+  `);
+
+  prestamoReminderModeColumnsChecked = true;
+  prestamoReminderModeColumnsReady = true;
+  return true;
+};
+
+let cuotaFeeColumnsChecked = false;
+let cuotaFeeColumnsReady = false;
+
+const ensureCuotaFeeColumns = async () => {
+  if (cuotaFeeColumnsChecked) {
+    return cuotaFeeColumnsReady;
+  }
+
+  await sequelize.query(`
+    ALTER TABLE public.cuotas
+    ADD COLUMN IF NOT EXISTS monto_fee_acumulado numeric(15,2) NOT NULL DEFAULT 0
+  `);
+  await sequelize.query(`
+    ALTER TABLE public.cuotas
+    ADD COLUMN IF NOT EXISTS monto_penalizacion_acumulada numeric(15,2) NOT NULL DEFAULT 0
+  `);
+  await sequelize.query(`
+    ALTER TABLE public.cuotas
+    ADD COLUMN IF NOT EXISTS motivo_fee text NULL
+  `);
+
+  cuotaFeeColumnsChecked = true;
+  cuotaFeeColumnsReady = true;
+  return true;
+};
+
 // GET /api/prestamos - Obtener todos los préstamos (paginado y filtrado)
 router.get('/', authenticateToken, requirePermission('prestamos.view'), async (req, res) => {
   try {
@@ -670,11 +723,89 @@ router.post(
   }
 );
 
+// GET /api/prestamos/:id/recordatorios/whatsapp - Obtener modo de recordatorio WhatsApp
+router.get('/:id/recordatorios/whatsapp', authenticateToken, requirePermission('prestamos.view'), async (req, res) => {
+  try {
+    await ensurePrestamoReminderModeColumns();
+    const prestamo = await Prestamo.findByPk(req.params.id, {
+      attributes: ['id', 'recordatorio_whatsapp_modo']
+    });
+
+    if (!prestamo) {
+      return res.status(404).json({
+        success: false,
+        message: 'Préstamo no encontrado',
+        code: 'LOAN_NOT_FOUND'
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        prestamo_id: prestamo.id,
+        modo: String(prestamo.recordatorio_whatsapp_modo || 'AUTO').toUpperCase()
+      }
+    });
+  } catch (error) {
+    console.error('Error obteniendo modo de recordatorio WhatsApp:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error obteniendo modo de recordatorio WhatsApp'
+    });
+  }
+});
+
+// PUT /api/prestamos/:id/recordatorios/whatsapp - Actualizar modo de recordatorio WhatsApp
+router.put('/:id/recordatorios/whatsapp', authenticateToken, requirePermission('notifications.send'), async (req, res) => {
+  try {
+    await ensurePrestamoReminderModeColumns();
+    const prestamo = await Prestamo.findByPk(req.params.id);
+
+    if (!prestamo) {
+      return res.status(404).json({
+        success: false,
+        message: 'Préstamo no encontrado',
+        code: 'LOAN_NOT_FOUND'
+      });
+    }
+
+    const modoRaw = String(req.body?.modo || '').trim().toUpperCase();
+    if (!REMINDER_MODES.has(modoRaw)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Modo de recordatorio inválido',
+        code: 'INVALID_REMINDER_MODE'
+      });
+    }
+
+    await prestamo.update({
+      recordatorio_whatsapp_modo: modoRaw,
+      recordatorio_whatsapp_actualizado_en: new Date(),
+      recordatorio_whatsapp_actualizado_por: req.user?.id || null
+    });
+
+    return res.json({
+      success: true,
+      message: 'Modo de recordatorio actualizado correctamente',
+      data: {
+        prestamo_id: prestamo.id,
+        modo: modoRaw
+      }
+    });
+  } catch (error) {
+    console.error('Error actualizando modo de recordatorio WhatsApp:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error actualizando modo de recordatorio WhatsApp'
+    });
+  }
+});
+
 // POST /api/prestamos/:id/pago-semanal - Registrar pago de cuota semanal desde préstamo
 router.post('/:id/pago-semanal', authenticateToken, requirePermission('prestamos.pay'), async (req, res) => {
   try {
     const { id } = req.params;
-    const { monto_pago, monto_penalizacion = 0 } = req.body;
+    const { monto_pago, monto_penalizacion = 0, monto_fee = 0, motivo_fee = null } = req.body;
 
     const buildError = (status, message, code = 'PAYMENT_RULE_VIOLATION') => ({
       status,
@@ -686,6 +817,7 @@ router.post('/:id/pago-semanal', authenticateToken, requirePermission('prestamos
     });
 
     const resultado = await sequelize.transaction(async (transaction) => {
+      await ensureCuotaFeeColumns();
       const prestamo = await Prestamo.findByPk(id, {
         include: [
           {
@@ -724,6 +856,8 @@ router.post('/:id/pago-semanal', authenticateToken, requirePermission('prestamos
 
       const montoPagoRecibido = parseFloat(monto_pago);
       const montoPenalizacion = parseFloat(monto_penalizacion) || 0;
+      const montoFee = parseFloat(monto_fee) || 0;
+      const motivoFeeNormalizado = motivo_fee ? String(motivo_fee).trim().slice(0, 255) : null;
 
       if (!monto_pago || isNaN(montoPagoRecibido)) {
         return buildError(400, 'El monto ingresado no coincide con las reglas de pago configuradas.', 'PAYMENT_RULE_VIOLATION');
@@ -736,6 +870,9 @@ router.post('/:id/pago-semanal', authenticateToken, requirePermission('prestamos
       if (isNaN(montoPenalizacion) || montoPenalizacion < 0) {
         return buildError(400, 'El monto ingresado no coincide con las reglas de pago configuradas.', 'INVALID_PENALTY_AMOUNT');
       }
+      if (isNaN(montoFee) || montoFee < 0) {
+        return buildError(400, 'El monto ingresado no coincide con las reglas de pago configuradas.', 'INVALID_FEE_AMOUNT');
+      }
 
       const hoy = new Date();
       hoy.setHours(0, 0, 0, 0);
@@ -747,10 +884,22 @@ router.post('/:id/pago-semanal', authenticateToken, requirePermission('prestamos
         return buildError(400, 'El monto ingresado no coincide con las reglas de pago configuradas.', 'INVALID_PENALTY_AMOUNT');
       }
 
+      const cuotaBaseOriginal = parseFloat(cuota.monto_total) || 0;
+      const cargosAdicionales = parseFloat((montoPenalizacion + montoFee).toFixed(2));
+      if (cargosAdicionales > 0) {
+        cuota.monto_total = parseFloat((cuotaBaseOriginal + cargosAdicionales).toFixed(2));
+        cuota.monto_penalizacion_acumulada = parseFloat(((parseFloat(cuota.monto_penalizacion_acumulada || 0)) + montoPenalizacion).toFixed(2));
+        cuota.monto_fee_acumulado = parseFloat(((parseFloat(cuota.monto_fee_acumulado || 0)) + montoFee).toFixed(2));
+        if (motivoFeeNormalizado && montoFee > 0) {
+          cuota.motivo_fee = cuota.motivo_fee
+            ? `${cuota.motivo_fee}\n${motivoFeeNormalizado}`
+            : motivoFeeNormalizado;
+        }
+      }
+
       const montoCuota = parseFloat(cuota.monto_total) || 0;
       const saldoCuotaActual = parseFloat((montoCuota - (parseFloat(cuota.monto_pagado || 0))).toFixed(2));
-      const montoEsperadoConPenalizacion = parseFloat((saldoCuotaActual + montoPenalizacion).toFixed(2));
-      const diferencia = parseFloat((montoPagoRecibido - montoEsperadoConPenalizacion).toFixed(2));
+      const cuotaObjetivo = saldoCuotaActual;
       const cuotasAjustadas = [];
       const ahora = new Date();
 
@@ -761,8 +910,8 @@ router.post('/:id/pago-semanal', authenticateToken, requirePermission('prestamos
       let tipoAplicacion = 'COMPLETO';
       let diferenciaAplicada = 0;
 
-      const notaBasePago = `Aplicación de pago semanal: recibido=${montoPagoRecibido.toFixed(2)}, esperado=${montoEsperadoConPenalizacion.toFixed(2)}, penalización=${montoPenalizacion.toFixed(2)}`;
-      const delta = parseFloat((montoPagoRecibido - montoEsperadoConPenalizacion).toFixed(2));
+      const notaBasePago = `Aplicación de pago semanal: recibido=${montoPagoRecibido.toFixed(2)}, objetivo=${cuotaObjetivo.toFixed(2)}, penalización=${montoPenalizacion.toFixed(2)}, fee=${montoFee.toFixed(2)}${motivoFeeNormalizado ? `, motivo_fee=${motivoFeeNormalizado}` : ''}, analista=${req.user?.id || 'N/A'}, fecha=${ahora.toISOString()}`;
+      const delta = parseFloat((montoPagoRecibido - cuotaObjetivo).toFixed(2));
 
       if (delta < -0.009) {
         // Pago parcial
@@ -907,12 +1056,15 @@ router.post('/:id/pago-semanal', authenticateToken, requirePermission('prestamos
           data: {
             prestamo_id: id,
             estado_prestamo: estadoPrestamo,
+            cuota_base: cuotaBaseOriginal,
             monto_aplicado: montoPagoRecibido,
             monto_penalizacion: montoPenalizacion,
-            cuota_objetivo: montoEsperadoConPenalizacion,
+            monto_fee: montoFee,
+            motivo_fee: motivoFeeNormalizado,
+            cuota_objetivo: cuotaObjetivo,
             faltante_o_excedente: tipoAplicacion === 'PARCIAL'
               ? parseFloat(Math.abs(delta).toFixed(2))
-              : parseFloat((-Math.max(delta, 0)).toFixed(2)),
+              : parseFloat(Math.max(delta, 0).toFixed(2)),
             tipo_aplicacion: tipoAplicacion,
             diferencia_aplicada: diferenciaAplicada,
             pendiente_total_actualizado: pendienteTotal,

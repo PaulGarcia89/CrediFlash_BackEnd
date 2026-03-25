@@ -15,6 +15,19 @@ const Prestamo = sequelize.define('Prestamo', {
     type: DataTypes.STRING(500),
     allowNull: true
   },
+  recordatorio_whatsapp_modo: {
+    type: DataTypes.STRING(20),
+    allowNull: false,
+    defaultValue: 'AUTO'
+  },
+  recordatorio_whatsapp_actualizado_en: {
+    type: DataTypes.DATE,
+    allowNull: true
+  },
+  recordatorio_whatsapp_actualizado_por: {
+    type: DataTypes.UUID,
+    allowNull: true
+  },
   fecha_inicio: {
     type: DataTypes.DATE,
     allowNull: false,
