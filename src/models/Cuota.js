@@ -92,7 +92,8 @@ const Cuota = sequelize.define('Cuota', {
           cuota.fecha_pago = new Date();
         }
       } else if (cuota.monto_pagado > 0) {
-        cuota.estado = 'PARCIAL';
+        // Mantener compatibilidad con constraints de BD que no aceptan PARCIAL
+        cuota.estado = 'PENDIENTE';
       }
     }
   }
@@ -117,7 +118,7 @@ Cuota.prototype.marcarComoPagada = async function(montoPagado, observaciones = n
     if (this.monto_pagado >= this.monto_total) {
       this.estado = 'PAGADO';
     } else if (this.monto_pagado > 0) {
-      this.estado = 'PARCIAL';
+      this.estado = 'PENDIENTE';
     }
     
     await this.save();
