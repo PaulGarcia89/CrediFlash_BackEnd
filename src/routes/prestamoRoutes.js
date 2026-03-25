@@ -771,7 +771,7 @@ router.get('/:id/recordatorios/whatsapp', authenticateToken, requirePermission('
 });
 
 // PUT /api/prestamos/:id/recordatorios/whatsapp - Actualizar modo de recordatorio WhatsApp
-router.put('/:id/recordatorios/whatsapp', authenticateToken, requirePermission('notifications.send'), async (req, res) => {
+router.put('/:id/recordatorios/whatsapp', authenticateToken, requirePermission('notifications.whatsapp.manage'), async (req, res) => {
   try {
     await ensurePrestamoReminderModeColumns();
     const prestamo = await Prestamo.findByPk(req.params.id);
@@ -918,7 +918,7 @@ router.post('/:id/pago-semanal', authenticateToken, requirePermission('prestamos
       const cuotasAjustadas = [];
       const ahora = new Date();
 
-      if (montoPagoRecibido < montoPenalizacion) {
+      if (montoPagoRecibido < (montoPenalizacion + montoFee)) {
         return buildError(400, 'El monto ingresado no coincide con las reglas de pago configuradas.', 'PAYMENT_RULE_VIOLATION');
       }
 
@@ -929,25 +929,38 @@ router.post('/:id/pago-semanal', authenticateToken, requirePermission('prestamos
       const delta = parseFloat((montoPagoRecibido - cuotaObjetivo).toFixed(2));
 
       if (delta < -0.009) {
-        // Pago parcial
+        // Pago parcial: arrastra faltante a la próxima cuota (si existe)
         tipoAplicacion = 'PARCIAL';
-        const abonoCuotaActual = Math.max(parseFloat((montoPagoRecibido - montoPenalizacion).toFixed(2)), 0);
-        const montoPagadoActual = parseFloat(cuota.monto_pagado || 0);
-        cuota.monto_pagado = parseFloat((montoPagadoActual + abonoCuotaActual).toFixed(2));
-        cuota.estado = 'PENDIENTE';
+        const faltante = parseFloat(Math.abs(delta).toFixed(2));
+        const siguienteCuota = cuotasPendientes[1];
+
+        cuota.monto_pagado = montoCuota;
+        cuota.estado = 'PAGADO';
+        cuota.fecha_pago = ahora;
         cuota.observaciones = cuota.observaciones
           ? `${cuota.observaciones}\n${notaBasePago}`
           : notaBasePago;
+
+        if (siguienteCuota) {
+          siguienteCuota.monto_total = parseFloat((parseFloat(siguienteCuota.monto_total || 0) + faltante).toFixed(2));
+          siguienteCuota.observaciones = siguienteCuota.observaciones
+            ? `${siguienteCuota.observaciones}\nArrastre por pago parcial desde cuota ${cuota.id}: +${faltante.toFixed(2)}`
+            : `Arrastre por pago parcial desde cuota ${cuota.id}: +${faltante.toFixed(2)}`;
+          await siguienteCuota.save({ transaction });
+
+          cuotasAjustadas.push({
+            cuota_id: siguienteCuota.id,
+            ajuste: parseFloat(faltante.toFixed(2)),
+            nuevo_monto: parseFloat(siguienteCuota.monto_total || 0)
+          });
+        } else {
+          // Si no hay cuota siguiente, se mantiene la cuota actual pendiente con saldo
+          cuota.monto_pagado = Math.max(parseFloat((montoPagoRecibido - montoPenalizacion - montoFee).toFixed(2)), 0);
+          cuota.estado = 'PENDIENTE';
+        }
+
         await cuota.save({ transaction });
-
-        const saldoRestante = parseFloat((montoCuota - cuota.monto_pagado).toFixed(2));
-
-        cuotasAjustadas.push({
-          cuota_id: cuota.id,
-          ajuste: parseFloat(abonoCuotaActual.toFixed(2)),
-          nuevo_monto: Math.max(saldoRestante, 0)
-        });
-        diferenciaAplicada = parseFloat(Math.abs(delta).toFixed(2)); // faltante
+        diferenciaAplicada = faltante;
       } else {
         // Pago exacto o sobrepago: cerrar cuota actual
         cuota.monto_pagado = montoCuota;
@@ -1085,7 +1098,13 @@ router.post('/:id/pago-semanal', authenticateToken, requirePermission('prestamos
             pendiente_total_actualizado: pendienteTotal,
             cuotas_restantes: pagosPendientes,
             cuota_actual_id: cuota.id,
+            estado_cuota_actual: cuota.estado,
             cuotas_ajustadas: cuotasAjustadas,
+            historial: {
+              timestamp: ahora.toISOString(),
+              analista_id: req.user?.id || null,
+              nota: notaBasePago
+            },
             cliente: clienteNombre,
             pagos_hechos: pagosHechos,
             pagos_pendientes: pagosPendientes,

@@ -122,7 +122,7 @@ router.post(
   '/prestamo/:prestamoId/notificar-whatsapp',
   withNotificationAuditContext('WHATSAPP'),
   authenticateToken,
-  requirePermission('notifications.send'),
+  requirePermission('notifications.whatsapp.manage'),
   cuotaController.enviarNotificacionWhatsAppManualPorPrestamo
 );
 

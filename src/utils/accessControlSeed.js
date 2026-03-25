@@ -27,6 +27,7 @@ const PERMISSION_DEFINITIONS = [
   { codigo: 'reportes.view', modulo: 'REPORTES', categoria: 'BANCARIO', nombre: 'Ver carga de pagos bancarios' },
   { codigo: 'reportes.manage', modulo: 'REPORTES', categoria: 'BANCARIO', nombre: 'Cargar pagos bancarios' },
   { codigo: 'notifications.send', modulo: 'NOTIFICACIONES', categoria: 'MENSAJERIA', nombre: 'Enviar notificaciones (correo/WhatsApp)' },
+  { codigo: 'notifications.whatsapp.manage', modulo: 'NOTIFICACIONES', categoria: 'WHATSAPP', nombre: 'Gestionar recordatorios WhatsApp' },
   { codigo: 'ratings.run', modulo: 'RATINGS', categoria: 'MODELOS', nombre: 'Ejecutar modelos de rating' },
   { codigo: 'analytics.view', modulo: 'REPORTES', categoria: 'ANALYTICS', nombre: 'Ver reportes/analytics' },
   { codigo: 'analistas.view', modulo: 'ANALISTAS', categoria: 'ADMIN', nombre: 'Ver analistas' },

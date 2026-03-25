@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
-const { Cliente, Prestamo, Solicitud, SolicitudDocumento, ClienteEmailVerificacion, sequelize } = require('../models');
+const { Cliente, Prestamo, Solicitud, SolicitudDocumento, ClienteEmailVerificacion, Cuota, sequelize } = require('../models');
 const { Op } = require('sequelize');
 const { sendCsv } = require('../utils/exporter');
 const { authenticateToken, requirePermission } = require('../middleware/auth');
@@ -528,6 +528,139 @@ router.get('/:id/prestamos', authenticateToken, requirePermission('prestamos.vie
     return res.status(500).json({
       success: false,
       message: 'Error obteniendo historial de préstamos'
+    });
+  }
+});
+
+// GET /api/clientes/:id/score-comportamiento
+router.get('/:id/score-comportamiento', authenticateToken, requirePermission('clientes.view'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const cliente = await Cliente.findByPk(id, { attributes: ['id', 'nombre', 'apellido'] });
+    if (!cliente) {
+      return res.status(404).json({
+        success: false,
+        message: 'Cliente no encontrado',
+        code: 'CLIENT_NOT_FOUND'
+      });
+    }
+
+    const cuotas = await Cuota.findAll({
+      include: [
+        {
+          model: Prestamo,
+          as: 'prestamo',
+          required: true,
+          include: [
+            {
+              model: Solicitud,
+              as: 'solicitud',
+              required: true,
+              where: { cliente_id: id },
+              attributes: []
+            }
+          ],
+          attributes: []
+        }
+      ],
+      attributes: ['id', 'fecha_vencimiento', 'fecha_pago', 'monto_total', 'monto_pagado']
+    });
+
+    const hoy = new Date();
+    hoy.setHours(0, 0, 0, 0);
+
+    const totalCuotas = cuotas.length;
+    let pagosPuntuales = 0;
+    let pagosTarde = 0;
+    let vencidasNoPagadas = 0;
+    let sumaDiasAtraso = 0;
+    let eventosAtraso = 0;
+
+    cuotas.forEach((cuota) => {
+      const fechaV = new Date(cuota.fecha_vencimiento);
+      fechaV.setHours(0, 0, 0, 0);
+      const montoTotal = parseFloat(cuota.monto_total || 0);
+      const montoPagado = parseFloat(cuota.monto_pagado || 0);
+      const pagadaCompleta = montoPagado >= montoTotal && montoTotal > 0;
+      const fechaPago = cuota.fecha_pago ? new Date(cuota.fecha_pago) : null;
+      if (fechaPago) fechaPago.setHours(0, 0, 0, 0);
+
+      if (pagadaCompleta && fechaPago && fechaPago <= fechaV) {
+        pagosPuntuales += 1;
+        return;
+      }
+
+      if (pagadaCompleta && fechaPago && fechaPago > fechaV) {
+        pagosTarde += 1;
+        const dias = Math.ceil((fechaPago.getTime() - fechaV.getTime()) / (1000 * 60 * 60 * 24));
+        sumaDiasAtraso += Math.max(dias, 0);
+        eventosAtraso += 1;
+        return;
+      }
+
+      const saldo = Math.max(montoTotal - montoPagado, 0);
+      if (saldo > 0 && fechaV < hoy) {
+        vencidasNoPagadas += 1;
+        const dias = Math.ceil((hoy.getTime() - fechaV.getTime()) / (1000 * 60 * 60 * 24));
+        sumaDiasAtraso += Math.max(dias, 0);
+        eventosAtraso += 1;
+      }
+    });
+
+    if (totalCuotas < 3) {
+      return res.json({
+        success: true,
+        data: {
+          cliente_id: id,
+          behavior_score: null,
+          behavior_rating: null,
+          insuficiente_historial: true,
+          metricas: {
+            total_pagos: totalCuotas,
+            pagos_puntuales: pagosPuntuales,
+            pagos_tarde: pagosTarde,
+            cuotas_vencidas_no_pagadas: vencidasNoPagadas,
+            dias_atraso_promedio: eventosAtraso > 0 ? parseFloat((sumaDiasAtraso / eventosAtraso).toFixed(2)) : 0,
+            porcentaje_puntualidad: totalCuotas > 0 ? parseFloat(((pagosPuntuales / totalCuotas) * 100).toFixed(2)) : 0
+          }
+        }
+      });
+    }
+
+    const porcentajePuntualidad = totalCuotas > 0 ? (pagosPuntuales / totalCuotas) * 100 : 0;
+    const porcentajeTarde = totalCuotas > 0 ? (pagosTarde / totalCuotas) * 100 : 0;
+    const porcentajeVencidas = totalCuotas > 0 ? (vencidasNoPagadas / totalCuotas) * 100 : 0;
+    const diasAtrasoPromedio = eventosAtraso > 0 ? (sumaDiasAtraso / eventosAtraso) : 0;
+
+    const scoreRaw = 100
+      - (porcentajeTarde * 0.35)
+      - (porcentajeVencidas * 0.55)
+      - (diasAtrasoPromedio * 1.25);
+    const behaviorScore = Math.max(0, Math.min(100, Math.round(scoreRaw)));
+    const behaviorRating = behaviorScore >= 90 ? 'A' : behaviorScore >= 75 ? 'B' : behaviorScore >= 60 ? 'C' : 'D';
+
+    return res.json({
+      success: true,
+      data: {
+        cliente_id: id,
+        behavior_score: behaviorScore,
+        behavior_rating: behaviorRating,
+        insuficiente_historial: false,
+        metricas: {
+          total_pagos: totalCuotas,
+          pagos_puntuales: pagosPuntuales,
+          pagos_tarde: pagosTarde,
+          cuotas_vencidas_no_pagadas: vencidasNoPagadas,
+          dias_atraso_promedio: parseFloat(diasAtrasoPromedio.toFixed(2)),
+          porcentaje_puntualidad: parseFloat(porcentajePuntualidad.toFixed(2))
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error calculando score de comportamiento:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error calculando score de comportamiento'
     });
   }
 });
