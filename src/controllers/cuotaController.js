@@ -773,7 +773,8 @@ const cuotaController = {
       if (cuotasExistentes > 0 && !force) {
         return res.status(400).json({
           success: false,
-          message: 'Este préstamo ya tiene cuotas generadas. Envíe force=true para regenerar.'
+          message: 'Este préstamo ya tiene cronograma activo. No se puede regenerar desde pago semanal.',
+          code: 'SCHEDULE_ALREADY_ACTIVE'
         });
       }
 
