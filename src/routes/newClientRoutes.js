@@ -99,7 +99,12 @@ const evaluateWeeklyScoring = (body = {}) => {
   const casaPropiaAlquiler = String(getAliasValue(body, ['casaPropiaAlquiler', 'casa_propia_alquiler'], 'OTRO')).toUpperCase();
   const montoAuto = toNumber(getAliasValue(body, ['montoAuto', 'monto_auto'], 0), 0);
   const montoCasaMensual = toNumber(getAliasValue(body, ['montoCasaMensual', 'monto_casa_mensual'], 0), 0);
-  const pagoAutoMensualLegacy = toNumber(getAliasValue(body, ['pagoAutoMensual', 'pagoAuto', 'pago_auto'], 0), 0);
+  const pagoAutoMensualLegacy = getNonNegativeAliasNumber(
+    body,
+    ['pagoAutoMensual', 'pagoAuto', 'pago_auto'],
+    'pagoAuto',
+    0
+  );
   const gastoViviendaMensual = montoCasaMensual > 0 ? montoCasaMensual : pagoAutoMensualLegacy;
   const gastosMensualesEstimados = toNumber(getAliasValue(body, ['gastosMensualesEstimados', 'estimados_gastos_mensuales'], 0), 0);
   const deudasActualesPagosMinimosMensuales = toNumber(getAliasValue(body, ['deudasActualesPagosMinimosMensuales', 'deudasActualesPagosMinimos', 'deudas_actuales_pagos_minimos'], 0), 0);
@@ -127,6 +132,7 @@ const evaluateWeeklyScoring = (body = {}) => {
     otrasDeudasSemanales: round(toWeekly(otrasDeudasMensuales)),
     pagoAutoSemanal: round(toWeekly(gastoViviendaMensual)),
     montoCasaSemanal: round(toWeekly(gastoViviendaMensual)),
+    pago_auto_mensual_normalizado: round(gastoViviendaMensual),
     gastosSemanalesEstimados: round(toWeekly(gastosMensualesEstimados)),
     deudasActualesPagosMinimosSemanales: round(toWeekly(deudasActualesPagosMinimosMensuales))
   };
@@ -382,6 +388,8 @@ router.get('/new-client/variables', authenticateToken, requirePermission('rating
         'montoCasaMensual',
         'monto_casa_mensual',
         'pagoAutoMensual',
+        'pagoAuto',
+        'pago_auto',
         'gastosMensualesEstimados',
         'deudasActualesPagosMinimosMensuales',
         'valorGarantia'
