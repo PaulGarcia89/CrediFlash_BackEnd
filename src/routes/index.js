@@ -16,6 +16,7 @@ const rolesRoutes = require('./rolesRoutes');
 const documentoRoutes = require('./documentoRoutes');
 const logsRoutes = require('./logsRoutes');
 const reportesRoutes = require('./reportesRoutes');
+const publicRoutes = require('./publicRoutes');
 
 // Rutas principales
 router.use('/analistas', analistaRoutes);
@@ -29,6 +30,7 @@ router.use('/roles', rolesRoutes);
 router.use('/documentos', documentoRoutes);
 router.use('/logs', logsRoutes);
 router.use('/reportes', reportesRoutes);
+router.use('/public', publicRoutes);
 
 // Ruta de salud
 router.get('/health', (req, res) => {
