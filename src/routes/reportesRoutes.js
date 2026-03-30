@@ -392,6 +392,27 @@ router.get(
 );
 
 router.get(
+  '/kpis/resumen',
+  authenticateToken,
+  requirePermission('reportes.view'),
+  reportesController.kpisResumen
+);
+
+router.get(
+  '/export',
+  authenticateToken,
+  requirePermission('reportes.manage'),
+  reportesController.exportar
+);
+
+router.get(
+  '/cuotas-pendientes-correo-admin',
+  authenticateToken,
+  requirePermission('reportes.manage'),
+  reportesController.cuotasPendientesCorreoAdmin
+);
+
+router.get(
   '/:tipo',
   authenticateToken,
   requirePermission('reportes.view'),
