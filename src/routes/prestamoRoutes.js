@@ -45,6 +45,49 @@ const normalizeOperationalStatus = (prestamo = {}) => {
   return 'PAGADO';
 };
 
+const resolveCuotasRestantes = (prestamo = {}) => {
+  const candidates = [];
+
+  const pagosPendientes = Number(prestamo.pagos_pendientes);
+  if (Number.isFinite(pagosPendientes) && pagosPendientes >= 0) {
+    candidates.push(Math.ceil(pagosPendientes));
+  }
+
+  const pendiente = toMoneyNumber(prestamo.pendiente);
+  const pagoSemanal = toMoneyNumber(prestamo.pagos_semanales);
+  if (
+    pendiente !== null &&
+    pendiente > 0 &&
+    pagoSemanal !== null &&
+    pagoSemanal > 0
+  ) {
+    candidates.push(Math.ceil(pendiente / pagoSemanal));
+  }
+
+  const numSemanas = Number(prestamo.num_semanas);
+  const pagosHechos = Number(prestamo.pagos_hechos);
+  if (
+    Number.isFinite(numSemanas) &&
+    numSemanas >= 0 &&
+    Number.isFinite(pagosHechos) &&
+    pagosHechos >= 0
+  ) {
+    candidates.push(Math.max(Math.ceil(numSemanas - pagosHechos), 0));
+  }
+
+  const rawStatus = String(prestamo.status || '').toUpperCase();
+  const matchStatus = rawStatus.match(/LE\s+QUEDAN\s+(\d+)\s+PAGOS?/);
+  if (matchStatus?.[1]) {
+    candidates.push(parseInt(matchStatus[1], 10));
+  }
+
+  const maxCandidate = candidates.length > 0 ? Math.max(...candidates) : 0;
+  if (maxCandidate > 0) return maxCandidate;
+
+  if (pendiente !== null && pendiente > 0) return 1;
+  return 0;
+};
+
 const calcularFechaVencimiento = (fechaInicio, numSemanas) => {
   const fecha = new Date(fechaInicio);
   const semanas = parseInt(numSemanas) || 0;
@@ -469,11 +512,13 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
       const raw = prestamo.toJSON();
       const solicitudId = raw?.solicitud?.id || raw?.solicitud_id;
       const contratoDoc = contratoBySolicitud.get(solicitudId);
+      const cuotasRestantes = resolveCuotasRestantes(raw);
 
       return {
         ...raw,
         cliente_id: raw?.solicitud?.cliente_id || null,
         saldo_pendiente: resolveSaldoPendiente(raw),
+        cuotas_restantes: cuotasRestantes,
         status_normalizado: normalizeOperationalStatus(raw),
         es_activo_operativo: normalizeOperationalStatus(raw) !== 'PAGADO',
         contrato_credito_id: contratoDoc?.id || null,
