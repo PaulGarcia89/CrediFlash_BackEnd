@@ -379,8 +379,20 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
     }
 
     if (search && String(search).trim() !== '') {
-      const term = String(search).trim();
-      where.nombre_completo = { [Op.iLike]: `%${term}%` };
+      const term = String(search).trim().replace(/\s+/g, ' ').toUpperCase();
+      const searchCondition = sequelize.where(
+        sequelize.fn(
+          'regexp_replace',
+          sequelize.fn('upper', sequelize.col('Prestamo.nombre_completo')),
+          '\\s+',
+          ' ',
+          'g'
+        ),
+        { [Op.like]: `%${term}%` }
+      );
+
+      const andConditions = Array.isArray(where[Op.and]) ? where[Op.and] : [];
+      where[Op.and] = [...andConditions, searchCondition];
     }
 
     if (fecha_desde || fecha_hasta) {
