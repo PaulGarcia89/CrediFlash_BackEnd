@@ -1,0 +1,10 @@
+✅ COMMIT OK
+
+=== RESUMEN ===
+clientes: 105
+solicitudes: 561
+prestamos: 561
+cuotas: 3177
+documentos: 0
+errors: 0
+archivo errores: reporte_errores_importacion.csv
