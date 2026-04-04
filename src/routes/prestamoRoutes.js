@@ -32,6 +32,19 @@ const resolveSaldoPendiente = (prestamo = {}) => {
   return 0;
 };
 
+const normalizeOperationalStatus = (prestamo = {}) => {
+  const rawStatus = String(prestamo.status || '').trim().toUpperCase();
+  const pagosPendientes = Number(prestamo.pagos_pendientes || 0);
+  const pendiente = Number(prestamo.pendiente || 0);
+
+  if (rawStatus.includes('LE QUEDAN')) return 'EN_MARCHA';
+  if (['NO DEBE NADA', 'PAGADO', 'CANCELADO'].includes(rawStatus)) return 'PAGADO';
+  if (['ACTIVO', 'EN_PROCESO', 'EN_MARCHA', 'MOROSO'].includes(rawStatus)) return rawStatus;
+
+  if (pagosPendientes > 0 || pendiente > 0) return 'EN_MARCHA';
+  return 'PAGADO';
+};
+
 const calcularFechaVencimiento = (fechaInicio, numSemanas) => {
   const fecha = new Date(fechaInicio);
   const semanas = parseInt(numSemanas) || 0;
@@ -461,6 +474,8 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
         ...raw,
         cliente_id: raw?.solicitud?.cliente_id || null,
         saldo_pendiente: resolveSaldoPendiente(raw),
+        status_normalizado: normalizeOperationalStatus(raw),
+        es_activo_operativo: normalizeOperationalStatus(raw) !== 'PAGADO',
         contrato_credito_id: contratoDoc?.id || null,
         contrato_url: contratoDoc
           ? construirUrlDocumento(req, contratoDoc.id, 'inline')
