@@ -339,6 +339,7 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
       limit = 20,
       prestamo_id,
       status,
+      search,
       cliente_id,
       format,
       fecha_desde,
@@ -352,7 +353,34 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
       where.id = prestamo_id;
     }
     if (status) {
-      where.status = status;
+      const statusNormalizado = String(status).trim().toUpperCase();
+      if (statusNormalizado !== 'TODOS') {
+        if (statusNormalizado === 'ACTIVO') {
+          where[Op.or] = [
+            { status: { [Op.in]: ['ACTIVO', 'EN_PROCESO', 'EN_MARCHA', 'MOROSO'] } },
+            { status: { [Op.iLike]: 'LE QUEDAN %PAGOS POR PAGAR' } },
+            { pagos_pendientes: { [Op.gt]: 0 } },
+            { pendiente: { [Op.gt]: 0 } }
+          ];
+        } else if (statusNormalizado === 'PAGADO') {
+          where[Op.or] = [
+            { status: { [Op.in]: ['PAGADO', 'NO DEBE NADA', 'CANCELADO'] } },
+            {
+              [Op.and]: [
+                { pagos_pendientes: { [Op.lte]: 0 } },
+                { pendiente: { [Op.lte]: 0 } }
+              ]
+            }
+          ];
+        } else {
+          where.status = status;
+        }
+      }
+    }
+
+    if (search && String(search).trim() !== '') {
+      const term = String(search).trim();
+      where.nombre_completo = { [Op.iLike]: `%${term}%` };
     }
 
     if (fecha_desde || fecha_hasta) {
