@@ -69,6 +69,7 @@ const deduplicarDocumentosPorId = (documentos = []) => {
 };
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ESTADOS_CLIENTE_PERMITIDOS = ['ACTIVO', 'SUSPENDIDO', 'INACTIVO', 'BLOQUEADO'];
 
 const buscarClienteReferidor = async (referidoPor, transaction) => {
   const valor = String(referidoPor || '').trim();
@@ -109,6 +110,36 @@ const ensureClienteReferidosColumns = async () => {
   clienteReferidosColumnsChecked = true;
 };
 
+let clienteEstadoColumnsChecked = false;
+const ensureClienteEstadoColumns = async () => {
+  if (clienteEstadoColumnsChecked) return;
+
+  await sequelize.query(`
+    ALTER TABLE public.clientes
+    ADD COLUMN IF NOT EXISTS motivo_estado text NULL
+  `);
+
+  await sequelize.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM pg_type t
+        WHERE t.typname = 'enum_clientes_estado'
+      ) THEN
+        BEGIN
+          ALTER TYPE enum_clientes_estado ADD VALUE IF NOT EXISTS 'SUSPENDIDO';
+          ALTER TYPE enum_clientes_estado ADD VALUE IF NOT EXISTS 'BLOQUEADO';
+        EXCEPTION WHEN duplicate_object THEN
+          NULL;
+        END;
+      END IF;
+    END $$;
+  `);
+
+  clienteEstadoColumnsChecked = true;
+};
+
 let tipoDocumentoColumnChecked = false;
 let tipoDocumentoColumnAvailable = false;
 
@@ -131,6 +162,7 @@ const ensureSolicitudDocumentoTipoColumn = async () => {
 router.get('/', authenticateToken, requirePermission('clientes.view'), async (req, res) => {
   try {
     await ensureClienteReferidosColumns();
+    await ensureClienteEstadoColumns();
     const { 
       page = 1, 
       limit = 10, 
@@ -192,6 +224,7 @@ router.get('/', authenticateToken, requirePermission('clientes.view'), async (re
       descuentos_referido_disponibles: cliente.descuentos_referido_disponibles,
       descuentos_referido_aplicados: cliente.descuentos_referido_aplicados,
       estado: cliente.estado,
+      motivo_estado: cliente.motivo_estado,
       observaciones: cliente.observaciones
     }));
 
@@ -213,6 +246,7 @@ router.get('/', authenticateToken, requirePermission('clientes.view'), async (re
           { key: 'descuentos_referido_disponibles', label: 'descuentos_referido_disponibles' },
           { key: 'descuentos_referido_aplicados', label: 'descuentos_referido_aplicados' },
           { key: 'estado', label: 'estado' },
+          { key: 'motivo_estado', label: 'motivo_estado' },
           { key: 'observaciones', label: 'observaciones' }
         ],
         rows: clientesTransformados
@@ -235,6 +269,54 @@ router.get('/', authenticateToken, requirePermission('clientes.view'), async (re
       success: false,
       message: 'Error obteniendo clientes',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// PATCH /api/clientes/:id/estado - Cambiar estado del cliente
+router.patch('/:id/estado', authenticateToken, requirePermission('clientes.edit'), async (req, res) => {
+  try {
+    await ensureClienteEstadoColumns();
+    const { id } = req.params;
+    const estado = String(req.body?.estado || '').trim().toUpperCase();
+    const motivoRaw = req.body?.motivo;
+    const motivo = typeof motivoRaw === 'string' ? motivoRaw.trim() : null;
+
+    if (!ESTADOS_CLIENTE_PERMITIDOS.includes(estado)) {
+      return res.status(400).json({
+        success: false,
+        message: `Estado inválido. Valores permitidos: ${ESTADOS_CLIENTE_PERMITIDOS.join(', ')}`
+      });
+    }
+
+    const cliente = await Cliente.findByPk(id);
+    if (!cliente) {
+      return res.status(404).json({
+        success: false,
+        message: 'Cliente no encontrado'
+      });
+    }
+
+    await cliente.update({
+      estado,
+      motivo_estado: motivo || null
+    });
+
+    return res.json({
+      success: true,
+      message: 'Estado actualizado',
+      data: {
+        id: cliente.id,
+        estado: cliente.estado,
+        motivo_estado: cliente.motivo_estado || null,
+        updated_at: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('Error actualizando estado de cliente:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error actualizando estado de cliente'
     });
   }
 });
@@ -694,6 +776,7 @@ router.get('/:id/score-comportamiento', authenticateToken, requirePermission('cl
 router.post('/', authenticateToken, requirePermission('clientes.create'), async (req, res) => {
   try {
     await ensureClienteReferidosColumns();
+    await ensureClienteEstadoColumns();
     const { 
       nombre, 
       apellido, 
@@ -755,6 +838,14 @@ router.post('/', authenticateToken, requirePermission('clientes.create'), async 
       });
     }
 
+    const estadoNormalizado = estado ? String(estado).trim().toUpperCase() : 'ACTIVO';
+    if (!ESTADOS_CLIENTE_PERMITIDOS.includes(estadoNormalizado)) {
+      return res.status(400).json({
+        success: false,
+        message: `Estado inválido. Valores permitidos: ${ESTADOS_CLIENTE_PERMITIDOS.join(', ')}`
+      });
+    }
+
     const cliente = await sequelize.transaction(async (transaction) => {
       const nuevoCliente = await Cliente.create({
         nombre,
@@ -772,7 +863,7 @@ router.post('/', authenticateToken, requirePermission('clientes.create'), async 
         monto_referido: parseFloat((referidoFlag ? montoReferidoNumero : 0).toFixed(2)),
         descuentos_referido_disponibles: referidoFlag && montoReferidoNumero > 0 ? 1 : 0,
         descuentos_referido_aplicados: 0,
-        estado: estado || 'ACTIVO',
+        estado: estadoNormalizado,
         observaciones,
         fecha_registro: new Date()
       }, { transaction });
@@ -823,6 +914,7 @@ router.post('/', authenticateToken, requirePermission('clientes.create'), async 
 router.put('/:id', authenticateToken, requirePermission('clientes.edit'), async (req, res) => {
   try {
     await ensureClienteReferidosColumns();
+    await ensureClienteEstadoColumns();
     const cliente = await Cliente.findByPk(req.params.id);
     
     if (!cliente) {
@@ -838,7 +930,7 @@ router.put('/:id', authenticateToken, requirePermission('clientes.edit'), async 
       'nombre_contacto', 'apellido_contacto', 'telefono_contacto',
       'email_contacto', 'direccion_contacto', 'es_referido',
       'referido_por', 'monto_referido', 'descuentos_referido_disponibles',
-      'descuentos_referido_aplicados', 'estado', 'observaciones'
+      'descuentos_referido_aplicados', 'estado', 'motivo_estado', 'observaciones'
     ];
 
     // Solo actualizar campos permitidos que estén presentes en el body
@@ -847,6 +939,16 @@ router.put('/:id', authenticateToken, requirePermission('clientes.edit'), async 
         updates[campo] = req.body[campo];
       }
     });
+
+    if (updates.estado !== undefined) {
+      updates.estado = String(updates.estado).trim().toUpperCase();
+      if (!ESTADOS_CLIENTE_PERMITIDOS.includes(updates.estado)) {
+        return res.status(400).json({
+          success: false,
+          message: `Estado inválido. Valores permitidos: ${ESTADOS_CLIENTE_PERMITIDOS.join(', ')}`
+        });
+      }
+    }
 
     if (updates.monto_referido !== undefined) {
       const montoReferidoNumero = parseFloat(updates.monto_referido);

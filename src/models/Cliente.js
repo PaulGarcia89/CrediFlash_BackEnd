@@ -52,8 +52,12 @@ const Cliente = sequelize.define('Cliente', {
     defaultValue: 0
   },
   estado: {
-    type: DataTypes.ENUM('ACTIVO', 'INACTIVO'),
+    type: DataTypes.ENUM('ACTIVO', 'INACTIVO', 'SUSPENDIDO', 'BLOQUEADO'),
     defaultValue: 'ACTIVO'
+  },
+  motivo_estado: {
+    type: DataTypes.TEXT,
+    allowNull: true
   },
   observaciones: DataTypes.TEXT
 }, {
