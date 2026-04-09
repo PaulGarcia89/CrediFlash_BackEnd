@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const { Op, fn, col, literal } = require('sequelize');
-const { Prestamo, Solicitud, Cliente, Cuota, sequelize } = require('../models');
+const { Op, fn, col } = require('sequelize');
+const { Prestamo, Solicitud, Cuota } = require('../models');
 const { authenticateToken, requirePermission } = require('../middleware/auth');
 
 const parseFecha = (value) => {
@@ -99,29 +99,19 @@ router.get('/dashboard', authenticateToken, requirePermission('analytics.view'),
       raw: true
     });
 
+    // Importaciones históricas pueden romper la relación solicitud->cliente.
+    // Para dashboard, usamos la fuente más estable: nombre_completo en préstamos.
     const topClientes = await Prestamo.findAll({
       attributes: [
-        [col('solicitud.cliente.id'), 'cliente_id'],
-        [literal(`CONCAT("solicitud->cliente"."nombre", ' ', "solicitud->cliente"."apellido")`), 'nombre_completo'],
-        [fn('SUM', col('Prestamo.monto_solicitado')), 'monto_total']
+        [fn('TRIM', col('nombre_completo')), 'nombre_completo'],
+        [fn('SUM', col('monto_solicitado')), 'monto_total']
       ],
-      include: [
-        {
-          model: Solicitud,
-          as: 'solicitud',
-          attributes: [],
-          include: [
-            {
-              model: Cliente,
-              as: 'cliente',
-              attributes: []
-            }
-          ]
-        }
-      ],
-      where: prestamosWhere,
-      group: [col('solicitud.cliente.id'), col('solicitud.cliente.nombre'), col('solicitud.cliente.apellido')],
-      order: [[fn('SUM', col('Prestamo.monto_solicitado')), 'DESC']],
+      where: {
+        ...prestamosWhere,
+        nombre_completo: { [Op.ne]: null }
+      },
+      group: [fn('TRIM', col('nombre_completo'))],
+      order: [[fn('SUM', col('monto_solicitado')), 'DESC']],
       limit: 10,
       raw: true
     });
@@ -166,7 +156,7 @@ router.get('/dashboard', authenticateToken, requirePermission('analytics.view'),
         }))
       },
       topClientes: topClientes.map((c) => ({
-        cliente_id: c.cliente_id,
+        cliente_id: c.cliente_id || null,
         nombre_completo: c.nombre_completo,
         monto_total: parseFloat(c.monto_total || 0)
       }))
