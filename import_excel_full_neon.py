@@ -126,6 +126,22 @@ def safe_status(estatus, pagos_pendientes):
         return "NO DEBE NADA"
     return f"LE QUEDAN {pagos_pendientes} PAGOS POR PAGAR"
 
+def is_checked_cell(value):
+    if value is True:
+        return True
+    if value is False or value is None:
+        return False
+
+    if isinstance(value, (int, float, Decimal)):
+        return Decimal(str(value)) > 0
+
+    text = upper(value).replace(".", "").strip()
+
+    return text in {
+        "X", "SI", "SÍ", "TRUE", "VERDADERO", "1",
+        "✓", "✔", "☑", "☒", "CHEK", "CHECK", "CHECKED"
+    }
+
 def document_candidates_for_name(nombre):
     # búsqueda flexible de pdf por nombre
     if not DOCS_DIR or not os.path.isdir(DOCS_DIR):
@@ -146,6 +162,16 @@ def document_candidates_for_name(nombre):
 def rel_doc_path(filename):
     # tu backend usa rutas tipo uploads/solicitudes/archivo.pdf
     return f"uploads/solicitudes/{filename}".replace("\\", "/")
+
+def get_sheet_by_candidates(wb, candidates, required=False):
+    available = {name.upper(): name for name in wb.sheetnames}
+    for candidate in candidates:
+        key = upper(candidate)
+        if key in available:
+            return wb[available[key]]
+    if required:
+        raise KeyError(f"Ninguna hoja encontrada entre: {candidates}. Hojas disponibles: {wb.sheetnames}")
+    return None
 
 
 # =========================
@@ -192,7 +218,10 @@ def upsert_default_modelo_aprobacion(cur):
 # Parsing Excel
 # =========================
 def load_client_rows(wb):
-    ws = wb[SHEET_CLIENTES]
+    ws = get_sheet_by_candidates(wb, [SHEET_CLIENTES], required=False)
+    if ws is None:
+        print(f"ℹ️ Hoja '{SHEET_CLIENTES}' no encontrada. Se crearán clientes desde la hoja de préstamos.")
+        return []
     rows = []
     for r in ws.iter_rows(min_row=2, values_only=True):
         nombre = clean(r[2])
@@ -210,7 +239,7 @@ def load_client_rows(wb):
     return rows
 
 def load_loan_rows(wb):
-    ws = wb[SHEET_PRESTAMOS]
+    ws = get_sheet_by_candidates(wb, [SHEET_PRESTAMOS, "Sheet1", "SHEET1", "CONTROL PRESTAMOS"], required=True)
     rows = []
     for idx, r in enumerate(ws.iter_rows(min_row=4, values_only=True), start=4):
         nombre = clean(r[3])
@@ -229,24 +258,21 @@ def load_loan_rows(wb):
         ganancias = d(r[11], default="0.00")
         pago_semanal = d(r[12], default="0.00")
 
-        pagos_hechos = to_int(r[25], 0)
-        pagos_pend = to_int(r[26], 0)
-        pagado = d(r[27], default="0.00")
-        balance = d(r[28], default="0.00")
-        estatus = clean(r[29])
-
-        pending_from_status = extract_pending_from_status(estatus)
-        if pending_from_status is not None:
-            pagos_pend = pending_from_status
-            if semanas > 0:
-                pagos_hechos = max(0, semanas - pagos_pend)
+        # Fuente de verdad: columnas checkbox 1..12 (índices 13..24)
+        check_values = list(r[13:25])
+        pagos_hechos = sum(1 for value in check_values if is_checked_cell(value))
 
         if semanas <= 0:
             # fallback robusto
             if pago_semanal > 0:
                 semanas = int((total / pago_semanal).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
             if semanas <= 0:
-                semanas = max(1, pagos_hechos + pagos_pend)
+                semanas = max(1, pagos_hechos)
+
+        if pagos_hechos > semanas:
+            pagos_hechos = semanas
+
+        pagos_pend = max(0, semanas - pagos_hechos)
 
         if pago_semanal <= 0 and semanas > 0:
             pago_semanal = (total / Decimal(semanas)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
@@ -257,11 +283,12 @@ def load_loan_rows(wb):
         if ganancias <= 0:
             ganancias = (total - monto).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
-        if pagado <= 0 and pagos_hechos > 0:
-            pagado = (pago_semanal * Decimal(pagos_hechos)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        pagado = (pago_semanal * Decimal(pagos_hechos)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        if pagado > total:
+            pagado = total
 
-        if balance <= 0:
-            balance = max(Decimal("0.00"), (total - pagado)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        balance = max(Decimal("0.00"), (total - pagado)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        estatus = "NO DEBE NADA" if pagos_pend == 0 else f"LE QUEDAN {pagos_pend} PAGOS POR PAGAR"
 
         rows.append({
             "excel_row": idx,
@@ -280,7 +307,7 @@ def load_loan_rows(wb):
             "pagos_pendientes": pagos_pend,
             "pagado": pagado,
             "pendiente": balance,
-            "status": safe_status(estatus, pagos_pend)
+            "status": estatus
         })
 
     return rows

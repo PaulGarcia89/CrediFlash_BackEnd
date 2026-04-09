@@ -57,6 +57,16 @@ def clean_text(value):
         return ""
     return " ".join(str(value).strip().split())
 
+def is_checked_cell(value):
+    if value is True:
+        return True
+    if value is False or value is None:
+        return False
+    if isinstance(value, (int, float, Decimal)):
+        return Decimal(str(value)) > 0
+    txt = clean_text(value).upper().replace(".", "")
+    return txt in {"X", "SI", "SÍ", "TRUE", "VERDADERO", "1", "✓", "✔", "☑", "☒", "CHECK", "CHECKED"}
+
 
 def esc_sql(text):
     return text.replace("'", "''")
@@ -91,14 +101,18 @@ def parse_rows():
         total_pagar = to_decimal(ws.cell(r, 11).value)
         ganancias = to_decimal(ws.cell(r, 12).value)
         pagos_semanales = to_decimal(ws.cell(r, 13).value)
-        pagos_hechos = to_decimal(ws.cell(r, 26).value)
-        pagos_pendientes = to_decimal(ws.cell(r, 27).value)
-        pagado = to_decimal(ws.cell(r, 28).value)
-        pendiente = to_decimal(ws.cell(r, 29).value)
-        status = clean_text(ws.cell(r, 30).value)
-
-        if status.upper() in {"NO DEBE NADA", "PAGADO"}:
-            status = "PAGADO"
+        checks = [ws.cell(r, c).value for c in range(14, 26)]  # 1..12
+        pagos_hechos = Decimal(sum(1 for v in checks if is_checked_cell(v)))
+        if num_semanas <= 0 and pagos_hechos > 0:
+            num_semanas = int(pagos_hechos)
+        if pagos_hechos > num_semanas:
+            pagos_hechos = Decimal(num_semanas)
+        pagos_pendientes = Decimal(max(0, int(num_semanas - int(pagos_hechos))))
+        pagado = (pagos_semanales * pagos_hechos).quantize(Decimal("0.01"))
+        if pagado > total_pagar:
+            pagado = total_pagar
+        pendiente = (total_pagar - pagado).quantize(Decimal("0.01"))
+        status = "NO DEBE NADA" if pagos_pendientes == 0 else f"LE QUEDAN {int(pagos_pendientes)} PAGOS POR PAGAR"
 
         rows.append(
             {
