@@ -101,17 +101,50 @@ def parse_rows():
         total_pagar = to_decimal(ws.cell(r, 11).value)
         ganancias = to_decimal(ws.cell(r, 12).value)
         pagos_semanales = to_decimal(ws.cell(r, 13).value)
+        pagos_hechos_col = to_decimal(ws.cell(r, 26).value)
+        pagos_pend_col = to_decimal(ws.cell(r, 27).value)
+        pagado_col = to_decimal(ws.cell(r, 28).value)
+        pendiente_col = to_decimal(ws.cell(r, 29).value)
+        status_col = clean_text(ws.cell(r, 30).value)
+
         checks = [ws.cell(r, c).value for c in range(14, 26)]  # 1..12
-        pagos_hechos = Decimal(sum(1 for v in checks if is_checked_cell(v)))
-        if num_semanas <= 0 and pagos_hechos > 0:
-            num_semanas = int(pagos_hechos)
+        pagos_hechos_checks = Decimal(sum(1 for v in checks if is_checked_cell(v)))
+
+        resumen_informado = any(
+            clean_text(ws.cell(r, c).value) not in {"", "-"} for c in (26, 27, 30)
+        )
+
+        if resumen_informado:
+            if "LE QUEDAN" in status_col.upper() and "PAGOS" in status_col.upper():
+                import re
+                m = re.search(r"LE QUEDAN\\s+(\\d+)\\s+PAGOS", status_col.upper())
+                if m:
+                    pagos_pendientes = Decimal(int(m.group(1)))
+                    pagos_hechos = Decimal(max(0, num_semanas - int(pagos_pendientes)))
+                else:
+                    pagos_hechos = pagos_hechos_col
+                    pagos_pendientes = pagos_pend_col if pagos_pend_col > 0 else Decimal(max(0, num_semanas - int(pagos_hechos)))
+            elif status_col.upper() in {"NO DEBE NADA", "PAGADO"}:
+                pagos_hechos = Decimal(num_semanas)
+                pagos_pendientes = Decimal(0)
+            else:
+                pagos_hechos = pagos_hechos_col
+                pagos_pendientes = pagos_pend_col if pagos_pend_col > 0 else Decimal(max(0, num_semanas - int(pagos_hechos)))
+        else:
+            pagos_hechos = pagos_hechos_checks
+            if num_semanas <= 0 and pagos_hechos > 0:
+                num_semanas = int(pagos_hechos)
+            pagos_pendientes = Decimal(max(0, num_semanas - int(pagos_hechos)))
+
         if pagos_hechos > num_semanas:
             pagos_hechos = Decimal(num_semanas)
-        pagos_pendientes = Decimal(max(0, int(num_semanas - int(pagos_hechos))))
-        pagado = (pagos_semanales * pagos_hechos).quantize(Decimal("0.01"))
+        if pagos_pendientes > num_semanas:
+            pagos_pendientes = Decimal(num_semanas)
+
+        pagado = pagado_col if (resumen_informado and pagado_col > 0) else (pagos_semanales * pagos_hechos).quantize(Decimal("0.01"))
         if pagado > total_pagar:
             pagado = total_pagar
-        pendiente = (total_pagar - pagado).quantize(Decimal("0.01"))
+        pendiente = pendiente_col if (resumen_informado and pendiente_col > 0) else (total_pagar - pagado).quantize(Decimal("0.01"))
         status = "NO DEBE NADA" if pagos_pendientes == 0 else f"LE QUEDAN {int(pagos_pendientes)} PAGOS POR PAGAR"
 
         rows.append(

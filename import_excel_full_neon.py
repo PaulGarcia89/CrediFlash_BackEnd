@@ -258,9 +258,16 @@ def load_loan_rows(wb):
         ganancias = d(r[11], default="0.00")
         pago_semanal = d(r[12], default="0.00")
 
-        # Fuente de verdad: columnas checkbox 1..12 (índices 13..24)
+        # Resumen de la hoja (columnas finales)
+        pagos_hechos_col = to_int(r[25], 0)
+        pagos_pend_col = to_int(r[26], 0)
+        pagado_col = d(r[27], default="0.00")
+        balance_col = d(r[28], default="0.00")
+        estatus_col = clean(r[29])
+
+        # Checkboxes (1..12) solo como fallback, porque en algunos Excel vienen pre-marcados
         check_values = list(r[13:25])
-        pagos_hechos = sum(1 for value in check_values if is_checked_cell(value))
+        pagos_hechos_checks = sum(1 for value in check_values if is_checked_cell(value))
 
         if semanas <= 0:
             # fallback robusto
@@ -269,10 +276,29 @@ def load_loan_rows(wb):
             if semanas <= 0:
                 semanas = max(1, pagos_hechos)
 
+        # Priorizamos columnas resumen si vienen informadas
+        resumen_informado = (
+            clean(r[25]) not in {"", "-"} or
+            clean(r[26]) not in {"", "-"} or
+            clean(r[29]) not in {"", "-"}
+        )
+
+        if resumen_informado:
+            pending_from_status = extract_pending_from_status(estatus_col)
+            if pending_from_status is not None:
+                pagos_pend = pending_from_status
+                pagos_hechos = max(0, semanas - pagos_pend)
+            else:
+                pagos_hechos = max(0, pagos_hechos_col)
+                pagos_pend = max(0, pagos_pend_col) if pagos_pend_col > 0 else max(0, semanas - pagos_hechos)
+        else:
+            pagos_hechos = max(0, pagos_hechos_checks)
+            pagos_pend = max(0, semanas - pagos_hechos)
+
         if pagos_hechos > semanas:
             pagos_hechos = semanas
-
-        pagos_pend = max(0, semanas - pagos_hechos)
+        if pagos_pend > semanas:
+            pagos_pend = semanas
 
         if pago_semanal <= 0 and semanas > 0:
             pago_semanal = (total / Decimal(semanas)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
@@ -283,11 +309,18 @@ def load_loan_rows(wb):
         if ganancias <= 0:
             ganancias = (total - monto).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
-        pagado = (pago_semanal * Decimal(pagos_hechos)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        if pagado > total:
-            pagado = total
+        if resumen_informado and pagado_col > 0:
+            pagado = pagado_col
+        else:
+            pagado = (pago_semanal * Decimal(pagos_hechos)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            if pagado > total:
+                pagado = total
 
-        balance = max(Decimal("0.00"), (total - pagado)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        if resumen_informado and balance_col > 0:
+            balance = balance_col
+        else:
+            balance = max(Decimal("0.00"), (total - pagado)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
         estatus = "NO DEBE NADA" if pagos_pend == 0 else f"LE QUEDAN {pagos_pend} PAGOS POR PAGAR"
 
         rows.append({

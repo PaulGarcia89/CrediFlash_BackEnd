@@ -46,22 +46,20 @@ const normalizeOperationalStatus = (prestamo = {}) => {
 };
 
 const resolveCuotasRestantes = (prestamo = {}) => {
-  const candidates = [];
+  // Prioridad de fuentes para evitar inconsistencias por redondeo:
+  // 1) status textual "LE QUEDAN X PAGOS"
+  // 2) pagos_pendientes
+  // 3) num_semanas - pagos_hechos
+  // 4) pendiente / pagos_semanales (solo fallback)
+  const rawStatus = String(prestamo.status || '').toUpperCase();
+  const matchStatus = rawStatus.match(/LE\s+QUEDAN\s+(\d+)\s+PAGOS?/);
+  if (matchStatus?.[1]) {
+    return Math.max(parseInt(matchStatus[1], 10), 0);
+  }
 
   const pagosPendientes = Number(prestamo.pagos_pendientes);
   if (Number.isFinite(pagosPendientes) && pagosPendientes >= 0) {
-    candidates.push(Math.ceil(pagosPendientes));
-  }
-
-  const pendiente = toMoneyNumber(prestamo.pendiente);
-  const pagoSemanal = toMoneyNumber(prestamo.pagos_semanales);
-  if (
-    pendiente !== null &&
-    pendiente > 0 &&
-    pagoSemanal !== null &&
-    pagoSemanal > 0
-  ) {
-    candidates.push(Math.ceil(pendiente / pagoSemanal));
+    return Math.max(Math.round(pagosPendientes), 0);
   }
 
   const numSemanas = Number(prestamo.num_semanas);
@@ -72,17 +70,21 @@ const resolveCuotasRestantes = (prestamo = {}) => {
     Number.isFinite(pagosHechos) &&
     pagosHechos >= 0
   ) {
-    candidates.push(Math.max(Math.ceil(numSemanas - pagosHechos), 0));
+    return Math.max(Math.round(numSemanas - pagosHechos), 0);
   }
 
-  const rawStatus = String(prestamo.status || '').toUpperCase();
-  const matchStatus = rawStatus.match(/LE\s+QUEDAN\s+(\d+)\s+PAGOS?/);
-  if (matchStatus?.[1]) {
-    candidates.push(parseInt(matchStatus[1], 10));
-  }
+  const pendiente = toMoneyNumber(prestamo.pendiente);
+  const pagoSemanal = toMoneyNumber(prestamo.pagos_semanales);
+  if (pendiente !== null && pendiente > 0 && pagoSemanal !== null && pagoSemanal > 0) {
+    const raw = pendiente / pagoSemanal;
+    const nearest = Math.round(raw);
+    // Tolerancia por redondeo monetario (ej: 1540 / 128.33 = 12.0009)
+    if (Math.abs(raw - nearest) <= 0.02) {
+      return Math.max(nearest, 0);
+    }
 
-  const maxCandidate = candidates.length > 0 ? Math.max(...candidates) : 0;
-  if (maxCandidate > 0) return maxCandidate;
+    return Math.max(Math.ceil(raw), 0);
+  }
 
   if (pendiente !== null && pendiente > 0) return 1;
   return 0;
