@@ -148,23 +148,30 @@ const getClienteDocumentoPath = (file) => {
 const resolveAbsoluteUploadPath = (relativePath = '') =>
   path.join(__dirname, '..', '..', String(relativePath || '').replace(/^\/+/, ''));
 
-const buildClienteDocumentoIdentity = (req, cliente = {}) => {
+const buildClienteDocumentoIdentity = (req, cliente = {}, identityDoc = null) => {
   const relativePath = cliente?.documento_identidad_path || null;
-  if (!relativePath) {
+  const ruta = identityDoc?.ruta || relativePath;
+
+  if (!ruta) {
     return {
       documento_identidad: null,
       documento_identidad_url: null,
+      documento_identidad_id: null,
       documento_identidad_nombre: null,
       documento_identidad_size_bytes: null
     };
   }
 
-  const nombre = path.basename(relativePath);
-  const absolutePath = resolveAbsoluteUploadPath(relativePath);
+  const nombre = identityDoc?.nombre || path.basename(ruta);
+  const absolutePath = resolveAbsoluteUploadPath(ruta);
   let sizeBytes = null;
   try {
-    const stats = fs.statSync(absolutePath);
-    sizeBytes = Number(stats.size || 0);
+    if (identityDoc?.size_bytes !== undefined && identityDoc?.size_bytes !== null) {
+      sizeBytes = Number(identityDoc.size_bytes || 0);
+    } else {
+      const stats = fs.statSync(absolutePath);
+      sizeBytes = Number(stats.size || 0);
+    }
   } catch (_error) {
     sizeBytes = null;
   }
@@ -174,6 +181,7 @@ const buildClienteDocumentoIdentity = (req, cliente = {}) => {
   return {
     documento_identidad: protectedUrl,
     documento_identidad_url: protectedUrl,
+    documento_identidad_id: identityDoc?.id || null,
     documento_identidad_nombre: nombre || null,
     documento_identidad_size_bytes: sizeBytes
   };
@@ -263,6 +271,108 @@ const ensureClienteDocumentoColumn = async () => {
   clienteDocumentoColumnChecked = true;
 };
 
+let clienteDocumentosTableChecked = false;
+const ensureClienteDocumentosTable = async () => {
+  if (clienteDocumentosTableChecked) return;
+
+  await sequelize.query(`
+    CREATE TABLE IF NOT EXISTS public.cliente_documentos (
+      id uuid PRIMARY KEY,
+      cliente_id uuid NOT NULL REFERENCES public.clientes(id) ON DELETE CASCADE,
+      tipo character varying(30) NOT NULL DEFAULT 'IDENTIDAD',
+      nombre character varying(255) NOT NULL,
+      mime_type character varying(100) NOT NULL DEFAULT 'application/pdf',
+      size_bytes integer NULL,
+      ruta character varying(500) NOT NULL,
+      creado_en timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await sequelize.query(`
+    CREATE INDEX IF NOT EXISTS idx_cliente_documentos_cliente_tipo
+    ON public.cliente_documentos (cliente_id, tipo)
+  `);
+
+  clienteDocumentosTableChecked = true;
+};
+
+const getLatestClienteDocumentoIdentidad = async (clienteId) => {
+  await ensureClienteDocumentosTable();
+  const [rows] = await sequelize.query(
+    `
+      SELECT id, cliente_id, tipo, nombre, mime_type, size_bytes, ruta, creado_en
+      FROM public.cliente_documentos
+      WHERE cliente_id = :clienteId
+        AND upper(coalesce(tipo, '')) = 'IDENTIDAD'
+      ORDER BY creado_en DESC
+      LIMIT 1
+    `,
+    {
+      replacements: { clienteId },
+      type: sequelize.QueryTypes.SELECT
+    }
+  );
+  return rows || null;
+};
+
+const replaceClienteDocumentoIdentidad = async ({ clienteId, file, transaction = null }) => {
+  if (!file) return { inserted: null, previous: [] };
+  await ensureClienteDocumentosTable();
+
+  const ruta = getClienteDocumentoPath(file);
+  const nombre = String(file.originalname || file.filename || 'documento_identidad.pdf').slice(0, 255);
+  const sizeBytes = Number(file.size || 0);
+
+  const previous = await sequelize.query(
+    `
+      SELECT id, ruta
+      FROM public.cliente_documentos
+      WHERE cliente_id = :clienteId
+        AND upper(coalesce(tipo, '')) = 'IDENTIDAD'
+    `,
+    {
+      replacements: { clienteId },
+      type: sequelize.QueryTypes.SELECT,
+      transaction
+    }
+  );
+
+  if (Array.isArray(previous) && previous.length > 0) {
+    await sequelize.query(
+      `
+        DELETE FROM public.cliente_documentos
+        WHERE cliente_id = :clienteId
+          AND upper(coalesce(tipo, '')) = 'IDENTIDAD'
+      `,
+      {
+        replacements: { clienteId },
+        type: sequelize.QueryTypes.DELETE,
+        transaction
+      }
+    );
+  }
+
+  const id = crypto.randomUUID();
+  await sequelize.query(
+    `
+      INSERT INTO public.cliente_documentos
+      (id, cliente_id, tipo, nombre, mime_type, size_bytes, ruta, creado_en)
+      VALUES
+      (:id, :clienteId, 'IDENTIDAD', :nombre, 'application/pdf', :sizeBytes, :ruta, NOW())
+    `,
+    {
+      replacements: { id, clienteId, nombre, sizeBytes, ruta },
+      type: sequelize.QueryTypes.INSERT,
+      transaction
+    }
+  );
+
+  return {
+    inserted: { id, cliente_id: clienteId, tipo: 'IDENTIDAD', nombre, size_bytes: sizeBytes, ruta, creado_en: new Date() },
+    previous: Array.isArray(previous) ? previous : []
+  };
+};
+
 let tipoDocumentoColumnChecked = false;
 let tipoDocumentoColumnAvailable = false;
 
@@ -287,6 +397,8 @@ router.get('/', authenticateToken, requirePermission('clientes.view'), async (re
     await ensureClienteReferidosColumns();
     await ensureClienteEstadoColumns();
     await ensureClienteDocumentoColumn();
+    await ensureClienteDocumentosTable();
+    await ensureClienteDocumentosTable();
     const { 
       page = 1, 
       limit = 10, 
@@ -662,6 +774,7 @@ router.get('/:id', authenticateToken, requirePermission('clientes.view'), async 
   try {
     await ensureClienteReferidosColumns();
     await ensureClienteDocumentoColumn();
+    await ensureClienteDocumentosTable();
     const cliente = await Cliente.findByPk(req.params.id);
     
     if (!cliente) {
@@ -672,7 +785,8 @@ router.get('/:id', authenticateToken, requirePermission('clientes.view'), async 
     }
     
     const raw = cliente.toJSON();
-    const documentoIdentidad = buildClienteDocumentoIdentity(req, raw);
+    const identityDoc = await getLatestClienteDocumentoIdentidad(raw.id);
+    const documentoIdentidad = buildClienteDocumentoIdentity(req, raw, identityDoc);
     res.json({
       success: true,
       data: {
@@ -694,6 +808,7 @@ router.get('/:id', authenticateToken, requirePermission('clientes.view'), async 
 router.get('/:id/documento-identidad/download', authenticateToken, requirePermission('clientes.view'), async (req, res) => {
   try {
     await ensureClienteDocumentoColumn();
+    await ensureClienteDocumentosTable();
     const cliente = await Cliente.findByPk(req.params.id, {
       attributes: ['id', 'documento_identidad_path']
     });
@@ -705,7 +820,8 @@ router.get('/:id/documento-identidad/download', authenticateToken, requirePermis
       });
     }
 
-    const relativePath = cliente.documento_identidad_path;
+    const identityDoc = await getLatestClienteDocumentoIdentidad(cliente.id);
+    const relativePath = identityDoc?.ruta || cliente.documento_identidad_path;
     if (!relativePath) {
       return res.status(404).json({
         success: false,
@@ -740,6 +856,7 @@ router.get('/:clienteId/documentos', authenticateToken, requirePermission('clien
   try {
     await ensureSolicitudDocumentoTipoColumn();
     await ensureClienteDocumentoColumn();
+    await ensureClienteDocumentosTable();
     const { clienteId } = req.params;
 
     const cliente = await Cliente.findByPk(clienteId);
@@ -784,7 +901,38 @@ router.get('/:clienteId/documentos', authenticateToken, requirePermission('clien
       }));
     });
 
-    const documentosUnicos = deduplicarDocumentosPorId(documentos);
+    const documentosCliente = await sequelize.query(
+      `
+        SELECT id, cliente_id, tipo, nombre, mime_type, size_bytes, ruta, creado_en
+        FROM public.cliente_documentos
+        WHERE cliente_id = :clienteId
+        ORDER BY creado_en DESC
+      `,
+      {
+        replacements: { clienteId },
+        type: sequelize.QueryTypes.SELECT
+      }
+    );
+
+    const documentosIdentidad = (documentosCliente || []).map((doc) => ({
+      id: doc.id,
+      cliente_id: doc.cliente_id,
+      solicitud_id: null,
+      nombre: doc.nombre,
+      tipo: 'PDF',
+      categoria: doc.tipo || 'IDENTIDAD',
+      tipo_documento: doc.tipo || 'IDENTIDAD',
+      mime_type: doc.mime_type || 'application/pdf',
+      url: construirUrlDocumento(req, doc.ruta),
+      url_ver: `${req.protocol}://${req.get('host')}/api/clientes/${doc.cliente_id}/documento-identidad/download?disposition=inline`,
+      download_url: `${req.protocol}://${req.get('host')}/api/clientes/${doc.cliente_id}/documento-identidad/download?disposition=attachment`,
+      url_descarga: `${req.protocol}://${req.get('host')}/api/clientes/${doc.cliente_id}/documento-identidad/download?disposition=attachment`,
+      delete_url: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}`,
+      size_bytes: doc.size_bytes,
+      fecha_subida: doc.creado_en
+    }));
+
+    const documentosUnicos = deduplicarDocumentosPorId([...documentosIdentidad, ...documentos]);
 
     return res.json({
       success: true,
@@ -1101,6 +1249,14 @@ router.post(
         }
       }
 
+      if (req.file) {
+        await replaceClienteDocumentoIdentidad({
+          clienteId: nuevoCliente.id,
+          file: req.file,
+          transaction
+        });
+      }
+
       return nuevoCliente;
     });
 
@@ -1116,9 +1272,7 @@ router.post(
       message: 'Cliente creado exitosamente',
       data: {
         ...cliente.toJSON(),
-        documento_identidad_url: cliente.documento_identidad_path
-          ? construirUrlDocumento(req, cliente.documento_identidad_path)
-          : null
+        ...buildClienteDocumentoIdentity(req, cliente.toJSON(), await getLatestClienteDocumentoIdentidad(cliente.id))
       }
     });
   } catch (error) {
@@ -1244,12 +1398,32 @@ router.put(
     }
 
     const documentoAnterior = cliente.documento_identidad_path;
+    let previousIdentityDocs = [];
 
-    await cliente.update(updates);
+    await sequelize.transaction(async (transaction) => {
+      await cliente.update(updates, { transaction });
+
+      if (req.file) {
+        const replaced = await replaceClienteDocumentoIdentidad({
+          clienteId: cliente.id,
+          file: req.file,
+          transaction
+        });
+        previousIdentityDocs = replaced.previous || [];
+      }
+    });
 
     if (nuevoDocumentoPath && documentoAnterior && documentoAnterior !== nuevoDocumentoPath) {
       const rutaAnteriorAbs = path.join(__dirname, '..', '..', documentoAnterior);
       fs.promises.unlink(rutaAnteriorAbs).catch(() => null);
+    }
+
+    if (Array.isArray(previousIdentityDocs) && previousIdentityDocs.length > 0) {
+      previousIdentityDocs.forEach((doc) => {
+        if (!doc?.ruta || doc.ruta === nuevoDocumentoPath) return;
+        const oldPath = resolveAbsoluteUploadPath(doc.ruta);
+        fs.promises.unlink(oldPath).catch(() => null);
+      });
     }
 
     res.json({
@@ -1257,9 +1431,7 @@ router.put(
       message: 'Cliente actualizado exitosamente',
       data: {
         ...cliente.toJSON(),
-        documento_identidad_url: cliente.documento_identidad_path
-          ? construirUrlDocumento(req, cliente.documento_identidad_path)
-          : null
+        ...buildClienteDocumentoIdentity(req, cliente.toJSON(), await getLatestClienteDocumentoIdentidad(cliente.id))
       }
     });
   } catch (error) {

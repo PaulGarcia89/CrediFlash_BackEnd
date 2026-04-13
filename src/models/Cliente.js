@@ -59,7 +59,11 @@ const Cliente = sequelize.define('Cliente', {
     type: DataTypes.TEXT,
     allowNull: true
   },
-  observaciones: DataTypes.TEXT
+  observaciones: DataTypes.TEXT,
+  documento_identidad_path: {
+    type: DataTypes.STRING(500),
+    allowNull: true
+  }
 }, {
   tableName: 'clientes',
   timestamps: false
