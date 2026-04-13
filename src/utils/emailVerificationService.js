@@ -26,6 +26,26 @@ const createTransporter = async () => {
   });
 };
 
+const maskSecret = (value = '') => {
+  const txt = String(value || '');
+  if (!txt) return '(vacío)';
+  if (txt.length <= 4) return '****';
+  return `${txt.slice(0, 2)}****${txt.slice(-2)}`;
+};
+
+const verifySmtpConfig = async () => {
+  const transporter = await createTransporter();
+  await transporter.verify();
+
+  return {
+    host: process.env.SMTP_HOST || null,
+    port: Number(process.env.SMTP_PORT || 587),
+    secure: Number(process.env.SMTP_PORT || 587) === 465,
+    user: process.env.SMTP_USER || null,
+    pass_masked: maskSecret(process.env.SMTP_PASS || '')
+  };
+};
+
 const sendOtpVerificationEmail = async ({ to, codigo, expiresInMinutes = 10 }) => {
   if (!to) {
     throw new Error('Email destinatario requerido');
@@ -59,5 +79,6 @@ const sendOtpVerificationEmail = async ({ to, codigo, expiresInMinutes = 10 }) =
 };
 
 module.exports = {
-  sendOtpVerificationEmail
+  sendOtpVerificationEmail,
+  verifySmtpConfig
 };
