@@ -1,16 +1,20 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+const multer = require('multer');
 const { Cliente, Prestamo, Solicitud, SolicitudDocumento, ClienteEmailVerificacion, Cuota, sequelize } = require('../models');
 const { Op } = require('sequelize');
 const { sendCsv } = require('../utils/exporter');
 const { authenticateToken, requirePermission } = require('../middleware/auth');
-const { sendOtpVerificationEmail } = require('../utils/emailVerificationService');
+const { sendOtpVerificationEmail, verifySmtpConfig } = require('../utils/emailVerificationService');
 
 const OTP_EXPIRES_SECONDS = 600;
 const OTP_MAX_ATTEMPTS = 5;
 const OTP_MIN_RESEND_SECONDS = 60;
 const OTP_MAX_SENDS_PER_HOUR = 5;
+const CLIENTE_DOCUMENT_UPLOAD_DIR = path.join(__dirname, '..', '..', 'uploads', 'clientes');
 
 const normalizarEmail = (email) => String(email || '').trim().toLowerCase();
 const validarFormatoEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || '').trim());
@@ -26,6 +30,18 @@ const timingSafeEqual = (left, right) => {
   } catch (_error) {
     return false;
   }
+};
+
+const validateDebugSmtpToken = (req) => {
+  const expected = String(process.env.SMTP_DEBUG_TOKEN || '').trim();
+  if (!expected) return false;
+  const received = String(
+    req.headers['x-debug-token'] ||
+    req.query?.token ||
+    req.body?.token ||
+    ''
+  ).trim();
+  return received && received === expected;
 };
 
 const toMoneyNumber = (value) => {
@@ -66,6 +82,101 @@ const deduplicarDocumentosPorId = (documentos = []) => {
     }
   });
   return Array.from(map.values());
+};
+
+const asegurarDirectorio = (dir) => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+};
+
+asegurarDirectorio(CLIENTE_DOCUMENT_UPLOAD_DIR);
+
+const clienteDocumentoStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    cb(null, CLIENTE_DOCUMENT_UPLOAD_DIR);
+  },
+  filename: (_req, file, cb) => {
+    const timestamp = Date.now();
+    const random = Math.round(Math.random() * 1e9);
+    const ext = path.extname(file.originalname || '').toLowerCase() || '.pdf';
+    const baseName = path
+      .basename(file.originalname || 'documento_identidad', ext)
+      .replace(/[^a-zA-Z0-9_-]/g, '_')
+      .slice(0, 50);
+    cb(null, `${timestamp}-${random}-${baseName}${ext}`);
+  }
+});
+
+const clienteDocumentoFilter = (_req, file, cb) => {
+  const isPdf = file.mimetype === 'application/pdf' || path.extname(file.originalname || '').toLowerCase() === '.pdf';
+  if (!isPdf) {
+    return cb(new Error('El documento de identidad debe ser un PDF válido.'), false);
+  }
+  return cb(null, true);
+};
+
+const clienteDocumentoUpload = multer({
+  storage: clienteDocumentoStorage,
+  fileFilter: clienteDocumentoFilter,
+  limits: { fileSize: 10 * 1024 * 1024 }
+});
+
+const uploadDocumentoIdentidadOpcional = (req, res, next) => {
+  clienteDocumentoUpload.single('documento_identidad')(req, res, (err) => {
+    if (err) {
+      const isPdfError = String(err.message || '').toLowerCase().includes('pdf');
+      const isSizeError = err.code === 'LIMIT_FILE_SIZE';
+      return res.status(400).json({
+        success: false,
+        message: isSizeError
+          ? 'El documento de identidad supera el tamaño máximo permitido (10MB).'
+          : isPdfError
+            ? 'El documento de identidad debe ser un PDF válido.'
+            : 'Error al cargar documento de identidad.'
+      });
+    }
+    return next();
+  });
+};
+
+const getClienteDocumentoPath = (file) => {
+  if (!file?.filename) return null;
+  return `uploads/clientes/${file.filename}`.replace(/\\/g, '/');
+};
+
+const resolveAbsoluteUploadPath = (relativePath = '') =>
+  path.join(__dirname, '..', '..', String(relativePath || '').replace(/^\/+/, ''));
+
+const buildClienteDocumentoIdentity = (req, cliente = {}) => {
+  const relativePath = cliente?.documento_identidad_path || null;
+  if (!relativePath) {
+    return {
+      documento_identidad: null,
+      documento_identidad_url: null,
+      documento_identidad_nombre: null,
+      documento_identidad_size_bytes: null
+    };
+  }
+
+  const nombre = path.basename(relativePath);
+  const absolutePath = resolveAbsoluteUploadPath(relativePath);
+  let sizeBytes = null;
+  try {
+    const stats = fs.statSync(absolutePath);
+    sizeBytes = Number(stats.size || 0);
+  } catch (_error) {
+    sizeBytes = null;
+  }
+
+  const protectedUrl = `${req.protocol}://${req.get('host')}/api/clientes/${cliente.id}/documento-identidad/download`;
+
+  return {
+    documento_identidad: protectedUrl,
+    documento_identidad_url: protectedUrl,
+    documento_identidad_nombre: nombre || null,
+    documento_identidad_size_bytes: sizeBytes
+  };
 };
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -140,6 +251,18 @@ const ensureClienteEstadoColumns = async () => {
   clienteEstadoColumnsChecked = true;
 };
 
+let clienteDocumentoColumnChecked = false;
+const ensureClienteDocumentoColumn = async () => {
+  if (clienteDocumentoColumnChecked) return;
+
+  await sequelize.query(`
+    ALTER TABLE public.clientes
+    ADD COLUMN IF NOT EXISTS documento_identidad_path character varying(500) NULL
+  `);
+
+  clienteDocumentoColumnChecked = true;
+};
+
 let tipoDocumentoColumnChecked = false;
 let tipoDocumentoColumnAvailable = false;
 
@@ -163,6 +286,7 @@ router.get('/', authenticateToken, requirePermission('clientes.view'), async (re
   try {
     await ensureClienteReferidosColumns();
     await ensureClienteEstadoColumns();
+    await ensureClienteDocumentoColumn();
     const { 
       page = 1, 
       limit = 10, 
@@ -225,7 +349,9 @@ router.get('/', authenticateToken, requirePermission('clientes.view'), async (re
       descuentos_referido_aplicados: cliente.descuentos_referido_aplicados,
       estado: cliente.estado,
       motivo_estado: cliente.motivo_estado,
-      observaciones: cliente.observaciones
+      observaciones: cliente.observaciones,
+      documento_identidad_path: cliente.documento_identidad_path || null,
+      documento_identidad_url: cliente.documento_identidad_path ? construirUrlDocumento(req, cliente.documento_identidad_path) : null
     }));
 
     if (format === 'csv') {
@@ -247,7 +373,9 @@ router.get('/', authenticateToken, requirePermission('clientes.view'), async (re
           { key: 'descuentos_referido_aplicados', label: 'descuentos_referido_aplicados' },
           { key: 'estado', label: 'estado' },
           { key: 'motivo_estado', label: 'motivo_estado' },
-          { key: 'observaciones', label: 'observaciones' }
+          { key: 'observaciones', label: 'observaciones' },
+          { key: 'documento_identidad_path', label: 'documento_identidad_path' },
+          { key: 'documento_identidad_url', label: 'documento_identidad_url' }
         ],
         rows: clientesTransformados
       });
@@ -277,6 +405,7 @@ router.get('/', authenticateToken, requirePermission('clientes.view'), async (re
 router.patch('/:id/estado', authenticateToken, requirePermission('clientes.edit'), async (req, res) => {
   try {
     await ensureClienteEstadoColumns();
+    await ensureClienteDocumentoColumn();
     const { id } = req.params;
     const estado = String(req.body?.estado || '').trim().toUpperCase();
     const motivoRaw = req.body?.motivo;
@@ -414,6 +543,38 @@ router.post('/verificacion-email/enviar', async (req, res) => {
   }
 });
 
+// GET /api/clientes/verificacion-email/debug-smtp - Diagnóstico temporal SMTP
+router.get('/verificacion-email/debug-smtp', async (req, res) => {
+  try {
+    if (!validateDebugSmtpToken(req)) {
+      return res.status(403).json({
+        success: false,
+        message: 'No autorizado para diagnóstico SMTP.'
+      });
+    }
+
+    const config = await verifySmtpConfig();
+
+    return res.json({
+      success: true,
+      message: 'SMTP verificado correctamente.',
+      data: config
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: 'Fallo al verificar SMTP.',
+      diagnostic: {
+        code: error?.code || null,
+        responseCode: error?.responseCode || null,
+        command: error?.command || null,
+        response: error?.response || null,
+        error: error?.message || 'SMTP verification error'
+      }
+    });
+  }
+});
+
 // POST /api/clientes/verificacion-email/verificar - Verificar OTP
 router.post('/verificacion-email/verificar', async (req, res) => {
   try {
@@ -500,6 +661,7 @@ router.post('/verificacion-email/verificar', async (req, res) => {
 router.get('/:id', authenticateToken, requirePermission('clientes.view'), async (req, res) => {
   try {
     await ensureClienteReferidosColumns();
+    await ensureClienteDocumentoColumn();
     const cliente = await Cliente.findByPk(req.params.id);
     
     if (!cliente) {
@@ -509,9 +671,15 @@ router.get('/:id', authenticateToken, requirePermission('clientes.view'), async 
       });
     }
     
+    const raw = cliente.toJSON();
+    const documentoIdentidad = buildClienteDocumentoIdentity(req, raw);
     res.json({
       success: true,
-      data: cliente
+      data: {
+        ...raw,
+        documento_identidad_path: raw.documento_identidad_path || null,
+        ...documentoIdentidad
+      }
     });
   } catch (error) {
     console.error('Error obteniendo cliente:', error);
@@ -522,10 +690,56 @@ router.get('/:id', authenticateToken, requirePermission('clientes.view'), async 
   }
 });
 
+// GET /api/clientes/:id/documento-identidad/download - Descargar/visualizar documento identidad (protegido)
+router.get('/:id/documento-identidad/download', authenticateToken, requirePermission('clientes.view'), async (req, res) => {
+  try {
+    await ensureClienteDocumentoColumn();
+    const cliente = await Cliente.findByPk(req.params.id, {
+      attributes: ['id', 'documento_identidad_path']
+    });
+
+    if (!cliente) {
+      return res.status(404).json({
+        success: false,
+        message: 'Cliente no encontrado'
+      });
+    }
+
+    const relativePath = cliente.documento_identidad_path;
+    if (!relativePath) {
+      return res.status(404).json({
+        success: false,
+        message: 'Cliente no tiene documento de identidad cargado'
+      });
+    }
+
+    const absolutePath = resolveAbsoluteUploadPath(relativePath);
+    if (!fs.existsSync(absolutePath)) {
+      return res.status(404).json({
+        success: false,
+        message: 'Documento de identidad no disponible en el servidor'
+      });
+    }
+
+    const disposition = String(req.query?.disposition || 'inline').toLowerCase() === 'attachment' ? 'attachment' : 'inline';
+    const filename = path.basename(relativePath);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `${disposition}; filename="${filename}"`);
+    return res.sendFile(absolutePath);
+  } catch (error) {
+    console.error('Error descargando documento de identidad:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error descargando documento de identidad'
+    });
+  }
+});
+
 // GET /api/clientes/:clienteId/documentos - Documentos PDF del cliente
 router.get('/:clienteId/documentos', authenticateToken, requirePermission('clientes.view'), async (req, res) => {
   try {
     await ensureSolicitudDocumentoTipoColumn();
+    await ensureClienteDocumentoColumn();
     const { clienteId } = req.params;
 
     const cliente = await Cliente.findByPk(clienteId);
@@ -588,6 +802,7 @@ router.get('/:clienteId/documentos', authenticateToken, requirePermission('clien
 // GET /api/clientes/:id/prestamos - Historial de préstamos del cliente (paginado)
 router.get('/:id/prestamos', authenticateToken, requirePermission('prestamos.view'), async (req, res) => {
   try {
+    await ensureClienteDocumentoColumn();
     const { id } = req.params;
     const { page = 1, limit = 20 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
@@ -642,6 +857,7 @@ router.get('/:id/prestamos', authenticateToken, requirePermission('prestamos.vie
 // GET /api/clientes/:id/score-comportamiento
 router.get('/:id/score-comportamiento', authenticateToken, requirePermission('clientes.view'), async (req, res) => {
   try {
+    await ensureClienteDocumentoColumn();
     const { id } = req.params;
     const cliente = await Cliente.findByPk(id, { attributes: ['id', 'nombre', 'apellido'] });
     if (!cliente) {
@@ -773,10 +989,16 @@ router.get('/:id/score-comportamiento', authenticateToken, requirePermission('cl
 });
 
 // POST /api/clientes - Crear cliente
-router.post('/', authenticateToken, requirePermission('clientes.create'), async (req, res) => {
+router.post(
+  '/',
+  authenticateToken,
+  requirePermission('clientes.create'),
+  uploadDocumentoIdentidadOpcional,
+  async (req, res) => {
   try {
     await ensureClienteReferidosColumns();
     await ensureClienteEstadoColumns();
+    await ensureClienteDocumentoColumn();
     const { 
       nombre, 
       apellido, 
@@ -794,6 +1016,7 @@ router.post('/', authenticateToken, requirePermission('clientes.create'), async 
       estado,
       observaciones 
     } = req.body;
+    const documentoIdentidadPath = getClienteDocumentoPath(req.file);
 
     // Validaciones básicas
     if (!nombre || !apellido) {
@@ -865,6 +1088,7 @@ router.post('/', authenticateToken, requirePermission('clientes.create'), async 
         descuentos_referido_aplicados: 0,
         estado: estadoNormalizado,
         observaciones,
+        documento_identidad_path: documentoIdentidadPath,
         fecha_registro: new Date()
       }, { transaction });
 
@@ -890,9 +1114,17 @@ router.post('/', authenticateToken, requirePermission('clientes.create'), async 
     res.status(201).json({
       success: true,
       message: 'Cliente creado exitosamente',
-      data: cliente
+      data: {
+        ...cliente.toJSON(),
+        documento_identidad_url: cliente.documento_identidad_path
+          ? construirUrlDocumento(req, cliente.documento_identidad_path)
+          : null
+      }
     });
   } catch (error) {
+    if (req.file?.path) {
+      fs.promises.unlink(req.file.path).catch(() => null);
+    }
     console.error('Error creando cliente:', error);
     
     if (error.name === 'SequelizeUniqueConstraintError') {
@@ -911,10 +1143,16 @@ router.post('/', authenticateToken, requirePermission('clientes.create'), async 
 });
 
 // PUT /api/clientes/:id - Actualizar cliente
-router.put('/:id', authenticateToken, requirePermission('clientes.edit'), async (req, res) => {
+router.put(
+  '/:id',
+  authenticateToken,
+  requirePermission('clientes.edit'),
+  uploadDocumentoIdentidadOpcional,
+  async (req, res) => {
   try {
     await ensureClienteReferidosColumns();
     await ensureClienteEstadoColumns();
+    await ensureClienteDocumentoColumn();
     const cliente = await Cliente.findByPk(req.params.id);
     
     if (!cliente) {
@@ -1000,14 +1238,34 @@ router.put('/:id', authenticateToken, requirePermission('clientes.edit'), async 
       }
     }
 
+    const nuevoDocumentoPath = getClienteDocumentoPath(req.file);
+    if (nuevoDocumentoPath) {
+      updates.documento_identidad_path = nuevoDocumentoPath;
+    }
+
+    const documentoAnterior = cliente.documento_identidad_path;
+
     await cliente.update(updates);
+
+    if (nuevoDocumentoPath && documentoAnterior && documentoAnterior !== nuevoDocumentoPath) {
+      const rutaAnteriorAbs = path.join(__dirname, '..', '..', documentoAnterior);
+      fs.promises.unlink(rutaAnteriorAbs).catch(() => null);
+    }
 
     res.json({
       success: true,
       message: 'Cliente actualizado exitosamente',
-      data: cliente
+      data: {
+        ...cliente.toJSON(),
+        documento_identidad_url: cliente.documento_identidad_path
+          ? construirUrlDocumento(req, cliente.documento_identidad_path)
+          : null
+      }
     });
   } catch (error) {
+    if (req.file?.path) {
+      fs.promises.unlink(req.file.path).catch(() => null);
+    }
     console.error('Error actualizando cliente:', error);
     res.status(500).json({
       success: false,
@@ -1019,6 +1277,7 @@ router.put('/:id', authenticateToken, requirePermission('clientes.edit'), async 
 // DELETE /api/clientes/:id - Eliminar cliente (cambiar estado a INACTIVO)
 router.delete('/:id', authenticateToken, requirePermission('clientes.edit'), async (req, res) => {
   try {
+    await ensureClienteDocumentoColumn();
     const cliente = await Cliente.findByPk(req.params.id);
     
     if (!cliente) {
@@ -1047,6 +1306,7 @@ router.delete('/:id', authenticateToken, requirePermission('clientes.edit'), asy
 // GET /api/clientes/search/:term - Buscar clientes
 router.get('/search/:term', authenticateToken, requirePermission('clientes.view'), async (req, res) => {
   try {
+    await ensureClienteDocumentoColumn();
     const { term } = req.params;
     
     const clientes = await Cliente.findAll({
@@ -1077,6 +1337,7 @@ router.get('/search/:term', authenticateToken, requirePermission('clientes.view'
 // GET /api/clientes/stats/estadisticas - Estadísticas de clientes
 router.get('/stats/estadisticas', authenticateToken, requirePermission('clientes.view'), async (req, res) => {
   try {
+    await ensureClienteDocumentoColumn();
     const totalClientes = await Cliente.count();
     const clientesActivos = await Cliente.count({ where: { estado: 'ACTIVO' } });
     const clientesInactivos = await Cliente.count({ where: { estado: 'INACTIVO' } });
