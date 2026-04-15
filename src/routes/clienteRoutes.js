@@ -7,6 +7,12 @@ const multer = require('multer');
 const { Cliente, Prestamo, Solicitud, SolicitudDocumento, ClienteEmailVerificacion, Cuota, sequelize } = require('../models');
 const { Op } = require('sequelize');
 const { sendCsv } = require('../utils/exporter');
+const {
+  getDocumentStorageState,
+  normalizeUploadPath,
+  resolveAbsoluteUploadPath,
+  deduplicateDocuments
+} = require('../utils/documentStorage');
 const { authenticateToken, requirePermission } = require('../middleware/auth');
 const { sendOtpVerificationEmail, verifySmtpConfig } = require('../utils/emailVerificationService');
 
@@ -70,18 +76,8 @@ const resolveSaldoPendiente = (prestamo = {}) => {
 
 const construirUrlDocumento = (req, rutaRelativa = '') => {
   const baseUrl = `${req.protocol}://${req.get('host')}`;
-  const rutaNormalizada = String(rutaRelativa || '').replace(/\\/g, '/').replace(/^\/+/, '');
+  const rutaNormalizada = normalizeUploadPath(rutaRelativa);
   return `${baseUrl}/${rutaNormalizada}`;
-};
-
-const deduplicarDocumentosPorId = (documentos = []) => {
-  const map = new Map();
-  documentos.forEach((doc) => {
-    if (doc?.id && !map.has(doc.id)) {
-      map.set(doc.id, doc);
-    }
-  });
-  return Array.from(map.values());
 };
 
 const asegurarDirectorio = (dir) => {
@@ -145,12 +141,11 @@ const getClienteDocumentoPath = (file) => {
   return `uploads/clientes/${file.filename}`.replace(/\\/g, '/');
 };
 
-const resolveAbsoluteUploadPath = (relativePath = '') =>
-  path.join(__dirname, '..', '..', String(relativePath || '').replace(/^\/+/, ''));
-
 const buildClienteDocumentoIdentity = (req, cliente = {}, identityDoc = null) => {
   const relativePath = cliente?.documento_identidad_path || null;
   const ruta = identityDoc?.ruta || relativePath;
+  const availability = getDocumentStorageState(ruta);
+  const protectedUrl = `${req.protocol}://${req.get('host')}/api/clientes/${cliente.id}/documento-identidad/download`;
 
   if (!ruta) {
     return {
@@ -163,12 +158,12 @@ const buildClienteDocumentoIdentity = (req, cliente = {}, identityDoc = null) =>
   }
 
   const nombre = identityDoc?.nombre || path.basename(ruta);
-  const absolutePath = resolveAbsoluteUploadPath(ruta);
   let sizeBytes = null;
   try {
     if (identityDoc?.size_bytes !== undefined && identityDoc?.size_bytes !== null) {
       sizeBytes = Number(identityDoc.size_bytes || 0);
-    } else {
+    } else if (availability.exists) {
+      const absolutePath = resolveAbsoluteUploadPath(ruta);
       const stats = fs.statSync(absolutePath);
       sizeBytes = Number(stats.size || 0);
     }
@@ -176,14 +171,14 @@ const buildClienteDocumentoIdentity = (req, cliente = {}, identityDoc = null) =>
     sizeBytes = null;
   }
 
-  const protectedUrl = `${req.protocol}://${req.get('host')}/api/clientes/${cliente.id}/documento-identidad/download`;
-
   return {
-    documento_identidad: protectedUrl,
-    documento_identidad_url: protectedUrl,
+    documento_identidad: availability.exists ? protectedUrl : null,
+    documento_identidad_url: availability.exists ? protectedUrl : null,
     documento_identidad_id: identityDoc?.id || null,
     documento_identidad_nombre: nombre || null,
-    documento_identidad_size_bytes: sizeBytes
+    documento_identidad_size_bytes: sizeBytes,
+    documento_identidad_exists: availability.exists,
+    documento_identidad_storage_path: availability.relativePath
   };
 };
 
@@ -822,15 +817,17 @@ router.get('/:id/documento-identidad/download', authenticateToken, requirePermis
 
     const identityDoc = await getLatestClienteDocumentoIdentidad(cliente.id);
     const relativePath = identityDoc?.ruta || cliente.documento_identidad_path;
-    if (!relativePath) {
+    const availability = getDocumentStorageState(relativePath);
+
+    if (!availability.valid || !availability.relativePath) {
       return res.status(404).json({
         success: false,
         message: 'Cliente no tiene documento de identidad cargado'
       });
     }
 
-    const absolutePath = resolveAbsoluteUploadPath(relativePath);
-    if (!fs.existsSync(absolutePath)) {
+    const absolutePath = availability.absolutePath;
+    if (!availability.exists) {
       return res.status(404).json({
         success: false,
         message: 'Documento de identidad no disponible en el servidor'
@@ -838,7 +835,7 @@ router.get('/:id/documento-identidad/download', authenticateToken, requirePermis
     }
 
     const disposition = String(req.query?.disposition || 'inline').toLowerCase() === 'attachment' ? 'attachment' : 'inline';
-    const filename = path.basename(relativePath);
+    const filename = path.basename(availability.relativePath);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `${disposition}; filename="${filename}"`);
     return res.sendFile(absolutePath);
@@ -882,23 +879,38 @@ router.get('/:clienteId/documentos', authenticateToken, requirePermission('clien
 
     const documentos = solicitudes.flatMap((solicitud) => {
       const docs = Array.isArray(solicitud.documentos) ? solicitud.documentos : [];
-      return docs.map((doc) => ({
-        id: doc.id,
-        cliente_id: solicitud.cliente_id,
-        solicitud_id: solicitud.id,
-        nombre: doc.nombre_original,
-        tipo: 'PDF',
-        categoria: doc.tipo_documento || null,
-        tipo_documento: doc.tipo_documento || null,
-        mime_type: doc.mime_type,
-        url: construirUrlDocumento(req, doc.ruta),
-        url_ver: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}/download?disposition=inline`,
-        download_url: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}/download?disposition=attachment`,
-        url_descarga: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}/download?disposition=attachment`,
-        delete_url: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}`,
-        size_bytes: doc.size_bytes,
-        fecha_subida: doc.creado_en
-      }));
+      return docs.map((doc) => {
+        const disponibilidad = getDocumentStorageState(doc.ruta);
+        const baseUrl = `${req.protocol}://${req.get('host')}`;
+        const urlVer = disponibilidad.exists
+          ? `${baseUrl}/api/documentos/${doc.id}/download?disposition=inline`
+          : null;
+        const urlDescarga = disponibilidad.exists
+          ? `${baseUrl}/api/documentos/${doc.id}/download?disposition=attachment`
+          : null;
+
+        return {
+          id: doc.id,
+          cliente_id: solicitud.cliente_id,
+          solicitud_id: solicitud.id,
+          nombre: doc.nombre_original,
+          tipo: 'PDF',
+          categoria: doc.tipo_documento || null,
+          tipo_documento: doc.tipo_documento || null,
+          mime_type: doc.mime_type,
+          storage_path: disponibilidad.relativePath,
+          storage_key: disponibilidad.relativePath,
+          exists: disponibilidad.exists,
+          archivo_disponible: disponibilidad.exists,
+          url: disponibilidad.exists ? construirUrlDocumento(req, disponibilidad.relativePath) : null,
+          url_ver: urlVer,
+          download_url: urlDescarga,
+          url_descarga: urlDescarga,
+          delete_url: `${baseUrl}/api/documentos/${doc.id}`,
+          size_bytes: doc.size_bytes,
+          fecha_subida: doc.creado_en
+        };
+      });
     });
 
     const documentosCliente = await sequelize.query(
@@ -914,29 +926,50 @@ router.get('/:clienteId/documentos', authenticateToken, requirePermission('clien
       }
     );
 
-    const documentosIdentidad = (documentosCliente || []).map((doc) => ({
-      id: doc.id,
-      cliente_id: doc.cliente_id,
-      solicitud_id: null,
-      nombre: doc.nombre,
-      tipo: 'PDF',
-      categoria: doc.tipo || 'IDENTIDAD',
-      tipo_documento: doc.tipo || 'IDENTIDAD',
-      mime_type: doc.mime_type || 'application/pdf',
-      url: construirUrlDocumento(req, doc.ruta),
-      url_ver: `${req.protocol}://${req.get('host')}/api/clientes/${doc.cliente_id}/documento-identidad/download?disposition=inline`,
-      download_url: `${req.protocol}://${req.get('host')}/api/clientes/${doc.cliente_id}/documento-identidad/download?disposition=attachment`,
-      url_descarga: `${req.protocol}://${req.get('host')}/api/clientes/${doc.cliente_id}/documento-identidad/download?disposition=attachment`,
-      delete_url: `${req.protocol}://${req.get('host')}/api/documentos/${doc.id}`,
-      size_bytes: doc.size_bytes,
-      fecha_subida: doc.creado_en
-    }));
+    const documentosIdentidad = (documentosCliente || []).map((doc) => {
+      const disponibilidad = getDocumentStorageState(doc.ruta);
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const urlDocumentos = disponibilidad.exists
+        ? `${baseUrl}/api/clientes/${doc.cliente_id}/documento-identidad/download?disposition=inline`
+        : null;
+      const urlDescarga = disponibilidad.exists
+        ? `${baseUrl}/api/clientes/${doc.cliente_id}/documento-identidad/download?disposition=attachment`
+        : null;
 
-    const documentosUnicos = deduplicarDocumentosPorId([...documentosIdentidad, ...documentos]);
+      return {
+        id: doc.id,
+        cliente_id: doc.cliente_id,
+        solicitud_id: null,
+        nombre: doc.nombre,
+        tipo: 'PDF',
+        categoria: doc.tipo || 'IDENTIDAD',
+        tipo_documento: doc.tipo || 'IDENTIDAD',
+        mime_type: doc.mime_type || 'application/pdf',
+        storage_path: disponibilidad.relativePath,
+        storage_key: disponibilidad.relativePath,
+        exists: disponibilidad.exists,
+        archivo_disponible: disponibilidad.exists,
+        url: disponibilidad.exists ? construirUrlDocumento(req, disponibilidad.relativePath) : null,
+        url_ver: urlDocumentos,
+        download_url: urlDescarga,
+        url_descarga: urlDescarga,
+        delete_url: `${baseUrl}/api/documentos/${doc.id}`,
+        size_bytes: doc.size_bytes,
+        fecha_subida: doc.creado_en
+      };
+    });
+
+    const documentosUnicos = deduplicateDocuments([...documentosIdentidad, ...documentos]);
+    const documentosDisponibles = documentosUnicos.filter((doc) => doc.exists !== false);
 
     return res.json({
       success: true,
-      data: documentosUnicos
+      data: documentosDisponibles,
+      meta: {
+        total: documentosUnicos.length,
+        disponibles: documentosDisponibles.length,
+        huerfanos: documentosUnicos.length - documentosDisponibles.length
+      }
     });
   } catch (error) {
     console.error('Error obteniendo documentos del cliente:', error);

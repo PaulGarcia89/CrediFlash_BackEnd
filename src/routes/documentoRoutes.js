@@ -4,8 +4,12 @@ const path = require('path');
 const router = express.Router();
 const { SolicitudDocumento } = require('../models');
 const { authenticateToken, requirePermission } = require('../middleware/auth');
-
-const PROJECT_ROOT = path.join(__dirname, '..', '..');
+const {
+  UPLOADS_ROOT,
+  getDocumentStorageState,
+  normalizeUploadPath,
+  resolveAbsoluteUploadPath
+} = require('../utils/documentStorage');
 
 const buildDocumentUrl = (req, documentoId, disposition = 'inline') =>
   `${req.protocol}://${req.get('host')}/api/documentos/${documentoId}/download?disposition=${disposition}`;
@@ -27,8 +31,12 @@ router.get('/:id/url', authenticateToken, requirePermission('documentos.view'), 
       data: {
         id: documento.id,
         tipo: documento.tipo_documento || null,
-        url: buildDocumentUrl(req, documento.id, 'inline'),
-        url_descarga: buildDocumentUrl(req, documento.id, 'attachment')
+        exists: availability.exists,
+        archivo_disponible: availability.exists,
+        storage_path: availability.relativePath,
+        storage_key: availability.relativePath,
+        url: availability.exists ? buildDocumentUrl(req, documento.id, 'inline') : null,
+        url_descarga: availability.exists ? buildDocumentUrl(req, documento.id, 'attachment') : null
       }
     });
   } catch (error) {
@@ -53,20 +61,23 @@ router.get('/:id/download', authenticateToken, requirePermission('documentos.vie
       });
     }
 
-    const rutaNormalizada = String(documento.ruta || '').replace(/\\/g, '/');
-    const rutaAbsoluta = path.resolve(PROJECT_ROOT, rutaNormalizada);
-    const uploadsRoot = path.resolve(PROJECT_ROOT, 'uploads');
+    const rutaNormalizada = normalizeUploadPath(documento.ruta);
+    const availability = getDocumentStorageState(rutaNormalizada);
+    const rutaAbsoluta = availability.absolutePath || resolveAbsoluteUploadPath(rutaNormalizada);
 
-    if (!rutaAbsoluta.startsWith(uploadsRoot)) {
+    if (!availability.valid || !rutaAbsoluta.startsWith(UPLOADS_ROOT)) {
       return res.status(400).json({
         success: false,
         message: 'Ruta de documento inválida'
       });
     }
 
-    if (!fs.existsSync(rutaAbsoluta)) {
+    if (!availability.exists) {
       return res.status(404).json({
         success: false,
+        exists: false,
+        archivo_disponible: false,
+        storage_path: availability.relativePath,
         message: (documento.tipo_documento || '').toUpperCase() === 'CONTRATO_CREDITO'
           ? 'Contrato no disponible en almacenamiento'
           : 'Archivo no disponible en el servidor'
@@ -94,9 +105,9 @@ router.delete(
   requirePermission('documentos.delete'),
   async (req, res) => {
     try {
-      const { id } = req.params;
+    const { id } = req.params;
 
-      const documento = await SolicitudDocumento.findByPk(id);
+    const documento = await SolicitudDocumento.findByPk(id);
       if (!documento) {
         return res.status(404).json({
           success: false,
@@ -104,11 +115,11 @@ router.delete(
         });
       }
 
-      const rutaNormalizada = String(documento.ruta || '').replace(/\\/g, '/');
-      const rutaAbsoluta = path.resolve(PROJECT_ROOT, rutaNormalizada);
-      const uploadsRoot = path.resolve(PROJECT_ROOT, 'uploads');
+      const rutaNormalizada = normalizeUploadPath(documento.ruta);
+      const availability = getDocumentStorageState(rutaNormalizada);
+      const rutaAbsoluta = availability.absolutePath || resolveAbsoluteUploadPath(rutaNormalizada);
 
-      if (rutaAbsoluta.startsWith(uploadsRoot) && fs.existsSync(rutaAbsoluta)) {
+      if (availability.valid && rutaAbsoluta.startsWith(UPLOADS_ROOT) && availability.exists) {
         await fs.promises.unlink(rutaAbsoluta).catch(() => null);
       }
 
