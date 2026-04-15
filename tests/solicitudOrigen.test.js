@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const {
   buildPublicSolicitudOrigin,
   buildInternalSolicitudOrigin,
+  applyOrigenSolicitud,
   ORIGEN_SOLICITUD,
   CANAL_REGISTRO,
   SOURCE
@@ -47,4 +48,36 @@ test('buildInternalSolicitudOrigin fuerza INTERNO', () => {
   assert.equal(result.origen, ORIGEN_SOLICITUD.INTERNO);
   assert.equal(result.solicitud_enviada_en, null);
   assert.equal(result.fecha_envio_solicitud, null);
+});
+
+test('applyOrigenSolicitud respeta el origen persistido sin heurísticas ambiguas', () => {
+  const publicResult = applyOrigenSolicitud({
+    origen_solicitud: 'EXTERNO',
+    es_publica: true,
+    es_externa: true,
+    canal_registro: 'EXTERNO',
+    source: 'PUBLIC'
+  });
+
+  const internalResult = applyOrigenSolicitud({
+    origen_solicitud: 'INTERNO',
+    es_publica: false,
+    es_externa: false,
+    canal_registro: 'INTERNO',
+    source: 'INTERNAL'
+  });
+
+  assert.equal(publicResult.origen_solicitud, ORIGEN_SOLICITUD.EXTERNO);
+  assert.equal(publicResult.es_publica, true);
+  assert.equal(publicResult.es_externa, true);
+  assert.equal(publicResult.canal_registro, CANAL_REGISTRO.EXTERNO);
+  assert.equal(publicResult.source, SOURCE.PUBLIC);
+  assert.equal(publicResult.origen, ORIGEN_SOLICITUD.EXTERNO);
+
+  assert.equal(internalResult.origen_solicitud, ORIGEN_SOLICITUD.INTERNO);
+  assert.equal(internalResult.es_publica, false);
+  assert.equal(internalResult.es_externa, false);
+  assert.equal(internalResult.canal_registro, CANAL_REGISTRO.INTERNO);
+  assert.equal(internalResult.source, SOURCE.INTERNAL);
+  assert.equal(internalResult.origen, ORIGEN_SOLICITUD.INTERNO);
 });
