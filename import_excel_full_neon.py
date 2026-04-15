@@ -54,11 +54,66 @@ def clean(s):
 def upper(s):
     return clean(s).upper()
 
-def as_date(v):
+SPANISH_MONTHS = {
+    "ENE": 1,
+    "FEB": 2,
+    "MAR": 3,
+    "ABR": 4,
+    "MAY": 5,
+    "JUN": 6,
+    "JUL": 7,
+    "AGO": 8,
+    "SEP": 9,
+    "SET": 9,
+    "OCT": 10,
+    "NOV": 11,
+    "DIC": 12,
+}
+
+
+def as_date(v, fallback_year=None):
     if isinstance(v, datetime):
         return v.date()
     if isinstance(v, date):
         return v
+    text = clean(v)
+    if not text:
+        return None
+
+    normalized = (
+        text.upper()
+        .replace(".", "")
+        .replace("º", "")
+        .replace("ª", "")
+    )
+
+    match = re.match(r"^(\d{1,2})-([A-ZÑ]+)(?:-(\d{2,4}))?$", normalized)
+    if match:
+        day = int(match.group(1))
+        month_key = match.group(2)[:3]
+        month = SPANISH_MONTHS.get(month_key)
+        if not month:
+            return None
+        year_text = match.group(3)
+        if year_text is None and fallback_year is not None:
+            year = int(fallback_year)
+        elif year_text is not None:
+            year = int(year_text)
+            if year < 100:
+                year += 2000
+        else:
+            return None
+        try:
+            return date(year, month, day)
+        except ValueError:
+            return None
+
+    for fmt in ("%Y-%m-%d", "%d-%b-%y", "%d-%b-%Y", "%m/%d/%Y", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+
     return None
 
 def to_int(v, default=0):
@@ -241,16 +296,16 @@ def load_client_rows(wb):
 def load_loan_rows(wb):
     ws = get_sheet_by_candidates(wb, [SHEET_PRESTAMOS, "Sheet1", "SHEET1", "CONTROL PRESTAMOS"], required=True)
     rows = []
-    for idx, r in enumerate(ws.iter_rows(min_row=4, values_only=True), start=4):
+    for idx, r in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
         nombre = clean(r[3])
         if not nombre or upper(nombre) == "NOMBRE":
             continue
 
-        fecha_inicio = as_date(r[0]) or datetime.now().date()
+        fecha_inicio = as_date(r[0], fallback_year=to_int(r[2], datetime.now().year)) or datetime.now().date()
         modalidad = normalize_modalidad(r[6])
         semanas = to_int(r[7], 0)
         dias = to_int(r[8], max(0, semanas * 7))
-        fecha_venc = as_date(r[9]) or (fecha_inicio + timedelta(days=max(1, semanas) * 7))
+        fecha_venc = as_date(r[9], fallback_year=fecha_inicio.year) or (fecha_inicio + timedelta(days=max(1, semanas) * 7))
 
         monto = d(r[4])
         tasa = parse_interes_to_tasa(r[5])
@@ -258,16 +313,15 @@ def load_loan_rows(wb):
         ganancias = d(r[11], default="0.00")
         pago_semanal = d(r[12], default="0.00")
 
-        # Resumen de la hoja (columnas finales)
-        pagos_hechos_col = to_int(r[25], 0)
-        pagos_pend_col = to_int(r[26], 0)
-        pagado_col = d(r[27], default="0.00")
-        balance_col = d(r[28], default="0.00")
-        estatus_col = clean(r[29])
+        # Resumen real de esta hoja: columnas 14 a 18
+        pagos_hechos_col = to_int(r[13], 0)
+        pagos_pend_col = to_int(r[14], 0)
+        pagado_col = d(r[15], default="0.00")
+        balance_col = d(r[16], default="0.00")
+        estatus_col = clean(r[17])
 
-        # Checkboxes (1..12) solo como fallback, porque en algunos Excel vienen pre-marcados
-        check_values = list(r[13:25])
-        pagos_hechos_checks = sum(1 for value in check_values if is_checked_cell(value))
+        # En esta hoja no hay checkboxes confiables, así que usamos el valor numérico
+        pagos_hechos_checks = pagos_hechos_col
 
         if semanas <= 0:
             # fallback robusto
@@ -278,9 +332,9 @@ def load_loan_rows(wb):
 
         # Priorizamos columnas resumen si vienen informadas
         resumen_informado = (
-            clean(r[25]) not in {"", "-"} or
-            clean(r[26]) not in {"", "-"} or
-            clean(r[29]) not in {"", "-"}
+            clean(r[13]) not in {"", "-"} or
+            clean(r[14]) not in {"", "-"} or
+            clean(r[17]) not in {"", "-"}
         )
 
         if resumen_informado:

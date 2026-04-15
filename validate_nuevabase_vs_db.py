@@ -31,8 +31,24 @@ def clean_text(value):
 def key_name(value):
     return clean_text(value).upper()
 
+SPANISH_MONTHS = {
+    "ENE": 1,
+    "FEB": 2,
+    "MAR": 3,
+    "ABR": 4,
+    "MAY": 5,
+    "JUN": 6,
+    "JUL": 7,
+    "AGO": 8,
+    "SEP": 9,
+    "SET": 9,
+    "OCT": 10,
+    "NOV": 11,
+    "DIC": 12,
+}
 
-def to_date(value):
+
+def to_date(value, fallback_year=None):
     if isinstance(value, datetime):
         return value.date()
     if isinstance(value, date):
@@ -42,6 +58,26 @@ def to_date(value):
     text = clean_text(value)
     if not text:
         return None
+    normalized = text.upper().replace(".", "").replace("º", "").replace("ª", "")
+    match = re.match(r"^(\d{1,2})-([A-ZÑ]+)(?:-(\d{2,4}))?$", normalized)
+    if match:
+        day = int(match.group(1))
+        month = SPANISH_MONTHS.get(match.group(2)[:3])
+        if not month:
+            return None
+        year_text = match.group(3)
+        if year_text is None and fallback_year is not None:
+            year = int(fallback_year)
+        elif year_text is not None:
+            year = int(year_text)
+            if year < 100:
+                year += 2000
+        else:
+            return None
+        try:
+            return date(year, month, day)
+        except ValueError:
+            return None
     for fmt in ("%Y-%m-%d", "%d-%b-%y", "%d-%b-%Y", "%m/%d/%Y", "%d/%m/%Y"):
         try:
             return datetime.strptime(text, fmt).date()
@@ -87,7 +123,7 @@ def load_excel_rows():
         nombre = clean_text(ws.cell(row_num, 4).value)
         if not nombre:
             continue
-        fecha_inicio = to_date(ws.cell(row_num, 1).value)
+        fecha_inicio = to_date(ws.cell(row_num, 1).value, fallback_year=ws.cell(row_num, 3).value)
         if not fecha_inicio:
             continue
         monto_solicitado = to_decimal(ws.cell(row_num, 5).value)
@@ -95,7 +131,7 @@ def load_excel_rows():
         sequence[base_key] += 1
         seq = sequence[base_key]
 
-        status = clean_text(ws.cell(row_num, 30).value)
+        status = clean_text(ws.cell(row_num, 18).value)
         data.append(
             {
                 "excel_row": row_num,
@@ -103,10 +139,10 @@ def load_excel_rows():
                 "fecha_inicio": fecha_inicio,
                 "monto_solicitado": monto_solicitado.quantize(Decimal("0.01")),
                 "seq": seq,
-                "pagos_hechos": to_int(ws.cell(row_num, 26).value, 0),
-                "pagos_pendientes": to_int(ws.cell(row_num, 27).value, 0),
-                "pagado": to_decimal(ws.cell(row_num, 28).value).quantize(Decimal("0.01")),
-                "pendiente": to_decimal(ws.cell(row_num, 29).value).quantize(Decimal("0.01")),
+                "pagos_hechos": to_int(ws.cell(row_num, 14).value, 0),
+                "pagos_pendientes": to_int(ws.cell(row_num, 15).value, 0),
+                "pagado": to_decimal(ws.cell(row_num, 16).value).quantize(Decimal("0.01")),
+                "pendiente": to_decimal(ws.cell(row_num, 17).value).quantize(Decimal("0.01")),
                 "status": status,
                 "status_pending": parse_status_pending(status),
             }

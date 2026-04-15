@@ -116,7 +116,7 @@ const eliminarArchivos = async (archivos = []) => {
 const normalizarModeloCalificacion = (modeloCalificacion) => {
   if (!modeloCalificacion) return null;
   const normalizado = modeloCalificacion.trim().toUpperCase();
-  const permitidos = ['CLIENTE_ANTIGUO', 'CLIENTE_NUEVO'];
+  const permitidos = ['CLIENTE_ANTIGUO', 'CLIENTE_NUEVO', 'EDITAR'];
   if (!permitidos.includes(normalizado)) return null;
   return normalizado;
 };
@@ -545,7 +545,7 @@ router.post(
         await eliminarArchivos(archivos);
         return res.status(400).json({
           success: false,
-          message: 'modelo_calificacion inválido. Use CLIENTE_ANTIGUO o CLIENTE_NUEVO'
+          message: 'modelo_calificacion inválido. Use CLIENTE_ANTIGUO, CLIENTE_NUEVO o EDITAR'
         });
       }
     }
@@ -896,7 +896,7 @@ router.put('/:id', authenticateToken, requirePermission('solicitudes.create'), a
       if (!modeloCalificacionNormalizado) {
         return res.status(400).json({
           success: false,
-          message: 'modelo_calificacion inválido. Use CLIENTE_ANTIGUO o CLIENTE_NUEVO'
+          message: 'modelo_calificacion inválido. Use CLIENTE_ANTIGUO, CLIENTE_NUEVO o EDITAR'
         });
       }
       updates.modelo_calificacion = modeloCalificacionNormalizado;

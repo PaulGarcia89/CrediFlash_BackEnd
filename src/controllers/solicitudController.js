@@ -54,7 +54,7 @@ class SolicitudController {
         plazo_semanas: parseInt(plazo_semanas),
         tasa_variable: tasa_variable ? parseFloat(tasa_variable) : 0.12,
         modelo_aprobacion_id: modelo_aprobacion_id || null,
-        modelo_calificacion: modelo_calificacion ? modelo_calificacion : null,
+        modelo_calificacion: modelo_calificacion ? String(modelo_calificacion).trim().toUpperCase() : null,
         estado: 'PENDIENTE',
         creado_en: new Date(),
         destino: destino || null
