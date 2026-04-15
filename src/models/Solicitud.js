@@ -23,6 +23,44 @@ const Solicitud = sequelize.define('Solicitud', {
     type: DataTypes.STRING(20),
     allowNull: true
   },
+  origen: {
+    type: DataTypes.STRING(30),
+    allowNull: true,
+    defaultValue: 'INTERNO'
+  },
+  origen_solicitud: {
+    type: DataTypes.STRING(20),
+    allowNull: true,
+    defaultValue: 'INTERNO'
+  },
+  es_publica: {
+    type: DataTypes.BOOLEAN,
+    allowNull: true,
+    defaultValue: false
+  },
+  es_externa: {
+    type: DataTypes.BOOLEAN,
+    allowNull: true,
+    defaultValue: false
+  },
+  canal_registro: {
+    type: DataTypes.STRING(20),
+    allowNull: true,
+    defaultValue: 'INTERNO'
+  },
+  source: {
+    type: DataTypes.STRING(20),
+    allowNull: true,
+    defaultValue: 'INTERNAL'
+  },
+  solicitud_enviada_en: {
+    type: DataTypes.DATE,
+    allowNull: true
+  },
+  fecha_envio_solicitud: {
+    type: DataTypes.DATE,
+    allowNull: true
+  },
   modalidad: {
     type: DataTypes.STRING(20),
     allowNull: true,

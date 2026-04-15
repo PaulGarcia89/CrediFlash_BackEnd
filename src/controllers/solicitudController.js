@@ -1,4 +1,5 @@
 const { Op, Sequelize } = require('sequelize');
+const { buildInternalSolicitudOrigin } = require('../utils/solicitudOrigen');
 
 class SolicitudController {
   constructor(models) {
@@ -55,6 +56,7 @@ class SolicitudController {
         tasa_variable: tasa_variable ? parseFloat(tasa_variable) : 0.12,
         modelo_aprobacion_id: modelo_aprobacion_id || null,
         modelo_calificacion: modelo_calificacion ? String(modelo_calificacion).trim().toUpperCase() : null,
+        ...buildInternalSolicitudOrigin(req.body || {}),
         estado: 'PENDIENTE',
         creado_en: new Date(),
         destino: destino || null
@@ -73,6 +75,12 @@ class SolicitudController {
           tasa_variable: solicitud.tasa_variable,
           modelo_aprobacion_id: solicitud.modelo_aprobacion_id,
           modelo_calificacion: solicitud.modelo_calificacion,
+          origen: solicitud.origen,
+          origen_solicitud: solicitud.origen_solicitud,
+          es_publica: solicitud.es_publica,
+          es_externa: solicitud.es_externa,
+          canal_registro: solicitud.canal_registro,
+          source: solicitud.source,
           estado: solicitud.estado,
           creado_en: solicitud.creado_en,
           destino: solicitud.destino,

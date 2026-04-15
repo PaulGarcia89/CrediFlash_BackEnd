@@ -7,6 +7,10 @@ const { Solicitud, SolicitudDocumento, Cliente, Analista, ModeloAprobacion, Pres
 const { Op } = require('sequelize');
 const { sendCsv } = require('../utils/exporter');
 const { calcularTasaEfectivaPorModalidad, normalizarModalidad, MODALIDADES_PERMITIDAS } = require('../utils/tasaModalidad');
+const {
+  buildInternalSolicitudOrigin,
+  ensureSolicitudOrigenColumns
+} = require('../utils/solicitudOrigen');
 
 // Importar middleware desde auth
 const { authenticateToken, requirePermission } = require('../middleware/auth');
@@ -404,6 +408,7 @@ router.post(
   async (req, res) => {
   try {
     console.log('📥 SOLICITUD RECIBIDA:', req.body);
+    await ensureSolicitudOrigenColumns(sequelize);
     
     const { 
       cliente_id, 
@@ -560,6 +565,7 @@ router.post(
       tasa_variable: tasasModalidad.tasa_variable,
       modelo_aprobacion_id: modeloAprobacionSeleccionado.id,
       modelo_calificacion: modeloCalificacionNormalizado,
+      ...buildInternalSolicitudOrigin(req.body || {}),
       estado: 'PENDIENTE',
       creado_en: new Date(),
       destino: normalizarTexto(destino)
@@ -667,6 +673,8 @@ router.get('/', authenticateToken, requirePermission('solicitudes.view'), async 
       format
     } = req.query;
     
+    await ensureSolicitudOrigenColumns(sequelize);
+    
     const offset = (parseInt(page) - 1) * parseInt(limit);
     
     const where = {};
@@ -712,6 +720,11 @@ router.get('/', authenticateToken, requirePermission('solicitudes.view'), async 
         modelo_aprobacion_id: solicitud.modelo_aprobacion_id,
         modelo_aprobacion: solicitud?.modelo_aprobacion?.nombre || null,
         modelo_calificacion: solicitud.modelo_calificacion,
+        origen_solicitud: solicitud.origen_solicitud,
+        es_publica: solicitud.es_publica,
+        es_externa: solicitud.es_externa,
+        canal_registro: solicitud.canal_registro,
+        source: solicitud.source,
         modalidad: solicitud.modalidad || 'SEMANAL',
         monto_solicitado: solicitud.monto_solicitado,
         plazo_semanas: solicitud.plazo_semanas,
@@ -731,6 +744,11 @@ router.get('/', authenticateToken, requirePermission('solicitudes.view'), async 
           { key: 'analista_id', label: 'analista_id' },
           { key: 'modelo_aprobacion_id', label: 'modelo_aprobacion_id' },
           { key: 'modelo_calificacion', label: 'modelo_calificacion' },
+          { key: 'origen_solicitud', label: 'origen_solicitud' },
+          { key: 'es_publica', label: 'es_publica' },
+          { key: 'es_externa', label: 'es_externa' },
+          { key: 'canal_registro', label: 'canal_registro' },
+          { key: 'source', label: 'source' },
           { key: 'modalidad', label: 'modalidad' },
           { key: 'monto_solicitado', label: 'monto_solicitado' },
           { key: 'plazo_semanas', label: 'plazo_semanas' },
@@ -781,6 +799,7 @@ router.get('/', authenticateToken, requirePermission('solicitudes.view'), async 
 router.get('/:id', authenticateToken, requirePermission('solicitudes.view'), async (req, res) => {
   try {
     await ensureSolicitudDocumentoTipoColumn();
+    await ensureSolicitudOrigenColumns(sequelize);
     const solicitud = await Solicitud.findByPk(req.params.id, {
       include: [
         { 

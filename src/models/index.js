@@ -16,6 +16,7 @@ const Role = require('./Role');
 const Permiso = require('./Permiso');
 const RolePermiso = require('./RolePermiso');
 const AnalistaRole = require('./AnalistaRole');
+const { ensureSolicitudOrigenColumns } = require('../utils/solicitudOrigen');
 
 // ========== DEFINIR RELACIONES ==========
 
@@ -244,6 +245,9 @@ models.inicializarBaseDeDatos = async (opciones = {}) => {
     
     await sequelize.sync(syncOptions);
     console.log(`✅ Modelos sincronizados (force: ${syncOptions.force}, alter: ${syncOptions.alter})`);
+
+    await ensureSolicitudOrigenColumns(sequelize);
+    console.log('✅ Columnas de origen de solicitudes verificadas');
     
     // Crear datos iniciales si la base está vacía
     await models.crearDatosIniciales();

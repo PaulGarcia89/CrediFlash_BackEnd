@@ -12,6 +12,10 @@ const {
   ModeloAprobacion,
   sequelize
 } = require('../models');
+const {
+  buildPublicSolicitudOrigin,
+  ensureSolicitudOrigenColumns
+} = require('../utils/solicitudOrigen');
 const { calcularTasaEfectivaPorModalidad, normalizarModalidad, MODALIDADES_PERMITIDAS } = require('../utils/tasaModalidad');
 const { sendOtpVerificationEmail } = require('../utils/emailVerificationService');
 
@@ -120,10 +124,7 @@ const ensureOrigenColumns = async () => {
     ALTER TABLE public.clientes
     ADD COLUMN IF NOT EXISTS origen character varying(30)
   `);
-  await sequelize.query(`
-    ALTER TABLE public.solicitudes
-    ADD COLUMN IF NOT EXISTS origen character varying(30)
-  `);
+  await ensureSolicitudOrigenColumns(sequelize);
   origenColumnsChecked = true;
 };
 
@@ -604,15 +605,11 @@ router.post('/solicitudes', uploadPublicSolicitudDocumentos, async (req, res) =>
         tasa_variable: tasasModalidad.tasa_variable,
         modelo_aprobacion_id: modeloAprobacionSeleccionado.id,
         modelo_calificacion: modeloCalificacionNormalizado,
+        ...buildPublicSolicitudOrigin(req.body || {}),
         estado: 'PENDIENTE',
         creado_en: new Date(),
         destino: normalizarTexto(destino)
       }, { transaction });
-
-      await sequelize.query(
-        'UPDATE public.solicitudes SET origen = :origen WHERE id = :id',
-        { replacements: { origen: 'PUBLIC_FORM', id: nuevaSolicitud.id }, transaction }
-      );
 
       const documentosData = documentosClasificados.map(({ archivo, tipo_documento }) => ({
         solicitud_id: nuevaSolicitud.id,
@@ -631,7 +628,12 @@ router.post('/solicitudes', uploadPublicSolicitudDocumentos, async (req, res) =>
     return res.status(201).json({
       success: true,
       data: {
-        id: solicitud.id
+        id: solicitud.id,
+        origen_solicitud: solicitud.origen_solicitud,
+        es_publica: solicitud.es_publica,
+        es_externa: solicitud.es_externa,
+        canal_registro: solicitud.canal_registro,
+        source: solicitud.source
       }
     });
   } catch (error) {
