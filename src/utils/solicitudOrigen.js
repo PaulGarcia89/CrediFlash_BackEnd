@@ -113,44 +113,12 @@ const ensureSolicitudOrigenColumns = async (sequelize) => {
   await sequelize.query(`
     UPDATE public.solicitudes
     SET
-      origen_solicitud = CASE
-        WHEN COALESCE(UPPER(origen), '') IN ('PUBLIC_FORM', 'EXTERNO')
-          OR COALESCE(es_publica, false) = true
-          OR COALESCE(es_externa, false) = true
-          OR COALESCE(UPPER(origen_solicitud), '') = 'EXTERNO'
-        THEN 'EXTERNO'
-        ELSE COALESCE(UPPER(origen_solicitud), 'INTERNO')
-      END,
-      es_publica = CASE
-        WHEN COALESCE(UPPER(origen), '') IN ('PUBLIC_FORM', 'EXTERNO')
-          OR COALESCE(UPPER(origen_solicitud), '') = 'EXTERNO'
-        THEN true
-        ELSE COALESCE(es_publica, false)
-      END,
-      es_externa = CASE
-        WHEN COALESCE(UPPER(origen), '') IN ('PUBLIC_FORM', 'EXTERNO')
-          OR COALESCE(UPPER(origen_solicitud), '') = 'EXTERNO'
-        THEN true
-        ELSE COALESCE(es_externa, false)
-      END,
-      canal_registro = CASE
-        WHEN COALESCE(UPPER(origen), '') IN ('PUBLIC_FORM', 'EXTERNO')
-          OR COALESCE(UPPER(origen_solicitud), '') = 'EXTERNO'
-        THEN 'EXTERNO'
-        ELSE COALESCE(UPPER(canal_registro), 'INTERNO')
-      END,
-      source = CASE
-        WHEN COALESCE(UPPER(origen), '') IN ('PUBLIC_FORM', 'EXTERNO')
-          OR COALESCE(UPPER(origen_solicitud), '') = 'EXTERNO'
-        THEN 'PUBLIC'
-        ELSE COALESCE(UPPER(source), 'INTERNAL')
-      END,
-      origen = CASE
-        WHEN COALESCE(UPPER(origen), '') IN ('PUBLIC_FORM', 'EXTERNO')
-          OR COALESCE(UPPER(origen_solicitud), '') = 'EXTERNO'
-        THEN 'EXTERNO'
-        ELSE COALESCE(UPPER(origen), 'INTERNO')
-      END,
+      origen_solicitud = COALESCE(UPPER(origen_solicitud), 'INTERNO'),
+      es_publica = COALESCE(es_publica, false),
+      es_externa = COALESCE(es_externa, false),
+      canal_registro = COALESCE(UPPER(canal_registro), 'INTERNO'),
+      source = COALESCE(UPPER(source), 'INTERNAL'),
+      origen = COALESCE(UPPER(origen), 'INTERNO'),
       solicitud_enviada_en = COALESCE(solicitud_enviada_en, fecha_envio_solicitud, creado_en),
       fecha_envio_solicitud = COALESCE(fecha_envio_solicitud, solicitud_enviada_en, creado_en)
     WHERE
