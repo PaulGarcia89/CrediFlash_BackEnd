@@ -1,6 +1,9 @@
 // src/models/Cuota.js - Modelo ajustado a tu estructura PostgreSQL
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
+const {
+  buildWeeklyDueDates
+} = require('../utils/cuotaSchedule');
 
 const Cuota = sequelize.define('Cuota', {
   id: {
@@ -204,7 +207,14 @@ Cuota.generarCuotasParaPrestamo = async function(prestamoId, datosPrestamo) {
 // Generar cuotas SEMANALES para un préstamo
 Cuota.generarCuotasSemanalesParaPrestamo = async function(prestamoId, datosPrestamo) {
   try {
-    const { monto_total, num_semanas, fecha_inicio } = datosPrestamo;
+    const {
+      monto_total,
+      num_semanas,
+      fecha_inicio,
+      fecha_aprobacion,
+      fecha_primer_pago,
+      fecha_primer_vencimiento
+    } = datosPrestamo;
     const semanas = parseInt(num_semanas) || 0;
 
     if (!semanas || semanas <= 0) {
@@ -216,14 +226,20 @@ Cuota.generarCuotasSemanalesParaPrestamo = async function(prestamoId, datosPrest
     const montoCapitalCuota = parseFloat((montoCuota * 0.85).toFixed(2));
     const montoInteresCuota = parseFloat((montoCuota * 0.15).toFixed(2));
 
-    let fechaVencimiento = new Date(fecha_inicio);
+    const fechasVencimiento = buildWeeklyDueDates({
+      numSemanas: semanas,
+      fechaInicio: fecha_inicio,
+      fechaAprobacion: fecha_aprobacion,
+      fechaPrimerPago: fecha_primer_pago,
+      fechaPrimerVencimiento: fecha_primer_vencimiento
+    });
 
     for (let i = 1; i <= semanas; i++) {
-      fechaVencimiento.setDate(fechaVencimiento.getDate() + 7);
+      const fechaVencimiento = fechasVencimiento[i - 1];
 
       cuotas.push({
         prestamo_id: prestamoId,
-        fecha_vencimiento: new Date(fechaVencimiento),
+        fecha_vencimiento: fechaVencimiento,
         monto_capital: montoCapitalCuota,
         monto_interes: montoInteresCuota,
         monto_total: montoCuota,

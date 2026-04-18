@@ -7,6 +7,11 @@ const { Prestamo, Solicitud, Cliente, Cuota, SolicitudDocumento, sequelize } = r
 const { Op } = require('sequelize');
 const { authenticateToken, requirePermission } = require('../middleware/auth');
 const { sendCsv } = require('../utils/exporter');
+const {
+  buildWeeklyDueDates,
+  normalizeToNoon,
+  resolveWeeklyFirstDueDate
+} = require('../utils/cuotaSchedule');
 
 const toMoneyNumber = (value) => {
   const numeric = Number(value);
@@ -114,7 +119,15 @@ const calcularMontos = (montoSolicitado, interes, numSemanas) => {
   };
 };
 
-const generarPlanCuotasSemanales = ({ prestamoId, fechaInicio, numSemanas, montoSolicitado, totalPagar }) => {
+const generarPlanCuotasSemanales = ({
+  prestamoId,
+  fechaInicio,
+  fechaPrimerVencimiento,
+  fechaPrimerPago,
+  numSemanas,
+  montoSolicitado,
+  totalPagar
+}) => {
   const semanas = parseInt(numSemanas, 10) || 0;
   if (semanas <= 0) return [];
 
@@ -131,9 +144,15 @@ const generarPlanCuotasSemanales = ({ prestamoId, fechaInicio, numSemanas, monto
   let acumuladoInteres = 0;
   const cuotas = [];
 
+  const fechasVencimiento = buildWeeklyDueDates({
+    numSemanas: semanas,
+    fechaInicio,
+    fechaPrimerVencimiento,
+    fechaPrimerPago
+  });
+
   for (let index = 1; index <= semanas; index += 1) {
-    const fechaVencimiento = new Date(fechaInicio);
-    fechaVencimiento.setDate(fechaVencimiento.getDate() + (index * 7));
+    const fechaVencimiento = fechasVencimiento[index - 1] || new Date(fechaInicio);
 
     const esUltima = index === semanas;
     const montoTotalCuota = esUltima
@@ -644,7 +663,12 @@ router.post(
   async (req, res) => {
   try {
     const { solicitudId } = req.params;
-    const { fecha_inicio, num_dias = 0 } = req.body;
+    const {
+      fecha_inicio,
+      fecha_primer_pago,
+      fecha_primer_vencimiento,
+      num_dias = 0
+    } = req.body;
     const contratoArchivo = obtenerArchivoContratoDesdeRequest(req);
     const contratoRutaRelativa = path.relative(path.join(__dirname, '..', '..'), contratoArchivo?.path || '');
 
@@ -703,7 +727,7 @@ router.post(
       }
 
       const fechaAprobacion = new Date();
-      const fechaInicio = fecha_inicio ? new Date(fecha_inicio) : new Date();
+      const fechaInicio = normalizeToNoon(fecha_inicio) || normalizeToNoon(new Date());
       const montoSolicitado = parseFloat(solicitud.monto_solicitado) || 0;
       const tasaInteres = parseFloat(solicitud.tasa_variable || 0) * 100;
       const modalidad = solicitud.modalidad || 'SEMANAL';
@@ -722,7 +746,18 @@ router.post(
         semanas
       );
 
-      const fechaVencimiento = calcularFechaVencimiento(fechaInicio, semanas);
+      const esSemanal = String(modalidad || '').toUpperCase() === 'SEMANAL';
+      const fechaPrimerVencimientoSemanal = esSemanal
+        ? resolveWeeklyFirstDueDate({
+            fechaInicio,
+            fechaAprobacion,
+            fechaPrimerPago: fecha_primer_pago,
+            fechaPrimerVencimiento: fecha_primer_vencimiento
+          })
+        : null;
+      const fechaVencimiento = esSemanal
+        ? calcularFechaVencimiento(fechaPrimerVencimientoSemanal, semanas - 1)
+        : calcularFechaVencimiento(fechaInicio, semanas);
 
       await solicitud.update({
         estado: 'APROBADO',
@@ -765,6 +800,8 @@ router.post(
       const planCuotas = generarPlanCuotasSemanales({
         prestamoId: prestamo.id,
         fechaInicio,
+        fechaPrimerVencimiento: fechaPrimerVencimientoSemanal,
+        fechaPrimerPago: fecha_primer_pago,
         numSemanas: semanas,
         montoSolicitado,
         totalPagar

@@ -11,6 +11,9 @@ const {
   buildInternalSolicitudOrigin,
   ensureSolicitudOrigenColumns
 } = require('../utils/solicitudOrigen');
+const {
+  resolveWeeklyFirstDueDate
+} = require('../utils/cuotaSchedule');
 
 // Importar middleware desde auth
 const { authenticateToken, requirePermission } = require('../middleware/auth');
@@ -293,6 +296,17 @@ function calcularFechaVencimiento(plazoSemanas, fechaInicio = new Date()) {
   return fecha;
 }
 
+function calcularFechaVencimientoSemanal(fechaPrimerVencimiento, plazoSemanas) {
+  const fecha = new Date(fechaPrimerVencimiento);
+  const semanas = parseInt(plazoSemanas, 10) || 0;
+  if (semanas <= 1) {
+    return fecha;
+  }
+
+  fecha.setDate(fecha.getDate() + ((semanas - 1) * 7));
+  return fecha;
+}
+
 function calcularMontoTotal(principal, tasaAnual, plazoSemanas) {
   // Asegurar que todos sean números
   const principalNum = parseFloat(principal) || 0;
@@ -366,20 +380,31 @@ async function aprobarSolicitudYCrearPrestamo(solicitudId, analistaId) {
     
     // 6. Crear préstamo
     console.log(`💰 Creando préstamo con monto total: ${montoTotal}`);
+    const fechaInicioPrestamo = new Date();
+    const fechaPrimerVencimiento =
+      String(solicitud.modalidad || '').toUpperCase() === 'SEMANAL'
+        ? resolveWeeklyFirstDueDate({
+            fechaInicio: fechaInicioPrestamo,
+            fechaAprobacion: fechaInicioPrestamo
+          })
+        : null;
+
     const prestamo = await Prestamo.create({
       solicitud_id: solicitudId,
-      fecha_inicio: new Date(),
+      fecha_inicio: fechaInicioPrestamo,
       monto_solicitado: parseFloat(solicitud.monto_solicitado),
       interes: parseFloat(solicitud.tasa_variable * 100),
       total_pagar: montoTotal,
       pendiente: montoTotal,
       status: 'ACTIVO',
       nombre_completo: `${solicitud.cliente.nombre} ${solicitud.cliente.apellido}`,
-      mes: new Date().toLocaleString('es-ES', { month: 'long' }),
-      anio: new Date().getFullYear().toString(),
+      mes: fechaInicioPrestamo.toLocaleString('es-ES', { month: 'long' }),
+      anio: fechaInicioPrestamo.getFullYear().toString(),
       modalidad: solicitud.modalidad || 'SEMANAL',
       num_semanas: parseInt(solicitud.plazo_semanas),
-      fecha_vencimiento: calcularFechaVencimiento(solicitud.plazo_semanas)
+      fecha_vencimiento: fechaPrimerVencimiento
+        ? calcularFechaVencimientoSemanal(fechaPrimerVencimiento, solicitud.plazo_semanas)
+        : calcularFechaVencimiento(solicitud.plazo_semanas, fechaInicioPrestamo)
     });
     
     console.log(`🎉 Préstamo creado: ${prestamo.id}`);
