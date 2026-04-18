@@ -319,6 +319,60 @@ const deletePhysicalClienteFiles = async (cliente = {}) => {
   await Promise.all(Array.from(paths).map((filePath) => fs.promises.unlink(filePath).catch(() => null)));
 };
 
+const performClienteHardDelete = async (req, res, clienteId) => {
+  if (!isAdminUser(req.user)) {
+    return res.status(403).json({
+      success: false,
+      message: 'Solo un administrador puede ejecutar la eliminación física de clientes.',
+      code: 'FORBIDDEN'
+    });
+  }
+
+  await ensureClienteDocumentoColumn();
+  await ensureClienteDocumentosTable();
+
+  const cliente = await Cliente.findByPk(clienteId);
+  if (!cliente) {
+    return res.status(404).json({
+      success: false,
+      message: 'Cliente no encontrado'
+    });
+  }
+
+  const dependencyCounts = await getClienteHardDeleteDependencyCounts(cliente.id);
+  const hasSensitiveDependencies = Object.entries(dependencyCounts).some(([, value]) => Number(value || 0) > 0);
+
+  if (hasSensitiveDependencies) {
+    return res.status(409).json({
+      success: false,
+      message: 'No se puede eliminar físicamente el cliente porque tiene relaciones sensibles asociadas.',
+      policy: 'BLOCK_IF_DEPENDENCIES_EXIST',
+      dependencies: dependencyCounts
+    });
+  }
+
+  await deletePhysicalClienteFiles(cliente);
+
+  await sequelize.transaction(async (transaction) => {
+    await sequelize.query(
+      'DELETE FROM public.cliente_documentos WHERE cliente_id = :clienteId',
+      {
+        replacements: { clienteId: cliente.id },
+        type: sequelize.QueryTypes.DELETE,
+        transaction
+      }
+    );
+
+    await cliente.destroy({ transaction });
+  });
+
+  return res.json({
+    success: true,
+    action: 'ELIMINACION_FISICA',
+    message: 'Cliente eliminado físicamente de la base de datos'
+  });
+};
+
 let clienteReferidosColumnsChecked = false;
 const ensureClienteReferidosColumns = async () => {
   if (clienteReferidosColumnsChecked) return;
@@ -1591,57 +1645,7 @@ router.put(
 // DELETE /api/clientes/:id/hard-delete - Eliminación física real solo para administradores
 router.delete('/:id/hard-delete', authenticateToken, async (req, res) => {
   try {
-    if (!isAdminUser(req.user)) {
-      return res.status(403).json({
-        success: false,
-        message: 'Solo un administrador puede ejecutar la eliminación física de clientes.',
-        code: 'FORBIDDEN'
-      });
-    }
-
-    await ensureClienteDocumentoColumn();
-    await ensureClienteDocumentosTable();
-
-    const cliente = await Cliente.findByPk(req.params.id);
-    if (!cliente) {
-      return res.status(404).json({
-        success: false,
-        message: 'Cliente no encontrado'
-      });
-    }
-
-    const dependencyCounts = await getClienteHardDeleteDependencyCounts(cliente.id);
-    const hasSensitiveDependencies = Object.entries(dependencyCounts).some(([, value]) => Number(value || 0) > 0);
-
-    if (hasSensitiveDependencies) {
-      return res.status(409).json({
-        success: false,
-        message: 'No se puede eliminar físicamente el cliente porque tiene relaciones sensibles asociadas.',
-        policy: 'BLOCK_IF_DEPENDENCIES_EXIST',
-        dependencies: dependencyCounts
-      });
-    }
-
-    await deletePhysicalClienteFiles(cliente);
-
-    await sequelize.transaction(async (transaction) => {
-      await sequelize.query(
-        'DELETE FROM public.cliente_documentos WHERE cliente_id = :clienteId',
-        {
-          replacements: { clienteId: cliente.id },
-          type: sequelize.QueryTypes.DELETE,
-          transaction
-        }
-      );
-
-      await cliente.destroy({ transaction });
-    });
-
-    return res.json({
-      success: true,
-      action: 'ELIMINACION_FISICA',
-      message: 'Cliente eliminado físicamente de la base de datos'
-    });
+    return performClienteHardDelete(req, res, req.params.id);
   } catch (error) {
     console.error('Error realizando hard delete de cliente:', error);
     return res.status(500).json({
@@ -1651,31 +1655,15 @@ router.delete('/:id/hard-delete', authenticateToken, async (req, res) => {
   }
 });
 
-// DELETE /api/clientes/:id - Eliminar cliente (cambiar estado a INACTIVO)
-router.delete('/:id', authenticateToken, requirePermission('clientes.edit'), async (req, res) => {
+// DELETE /api/clientes/:id - Eliminación física real solo para administradores
+router.delete('/:id', authenticateToken, async (req, res) => {
   try {
-    await ensureClienteDocumentoColumn();
-    const cliente = await Cliente.findByPk(req.params.id);
-    
-    if (!cliente) {
-      return res.status(404).json({
-        success: false,
-        message: 'Cliente no encontrado'
-      });
-    }
-
-    // En lugar de eliminar, cambiar estado a INACTIVO
-    await cliente.update({ estado: 'INACTIVO' });
-
-    res.json({
-      success: true,
-      message: 'Cliente marcado como INACTIVO'
-    });
+    return performClienteHardDelete(req, res, req.params.id);
   } catch (error) {
-    console.error('Error eliminando cliente:', error);
+    console.error('Error realizando hard delete de cliente:', error);
     res.status(500).json({
       success: false,
-      message: 'Error eliminando cliente'
+      message: 'Error eliminando físicamente el cliente'
     });
   }
 });
