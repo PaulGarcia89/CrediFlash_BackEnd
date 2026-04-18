@@ -210,6 +210,115 @@ const buscarClienteReferidor = async (referidoPor, transaction) => {
   });
 };
 
+const isAdminUser = (user = {}) => String(user?.rol || '').toUpperCase() === 'ADMINISTRADOR';
+
+const getClienteHardDeleteDependencyCounts = async (clienteId, transaction = null) => {
+  const solicitudes = await sequelize.query(
+    `
+      SELECT COUNT(*)::int AS total
+      FROM public.solicitudes
+      WHERE cliente_id = :clienteId
+    `,
+    {
+      replacements: { clienteId },
+      type: sequelize.QueryTypes.SELECT,
+      transaction
+    }
+  );
+  const prestamos = await sequelize.query(
+    `
+      SELECT COUNT(*)::int AS total
+      FROM public.prestamos p
+      INNER JOIN public.solicitudes s ON s.id = p.solicitud_id
+      WHERE s.cliente_id = :clienteId
+    `,
+    {
+      replacements: { clienteId },
+      type: sequelize.QueryTypes.SELECT,
+      transaction
+    }
+  );
+  const cuotas = await sequelize.query(
+    `
+      SELECT COUNT(*)::int AS total
+      FROM public.cuotas c
+      INNER JOIN public.prestamos p ON p.id = c.prestamo_id
+      INNER JOIN public.solicitudes s ON s.id = p.solicitud_id
+      WHERE s.cliente_id = :clienteId
+    `,
+    {
+      replacements: { clienteId },
+      type: sequelize.QueryTypes.SELECT,
+      transaction
+    }
+  );
+  const documentosSolicitudes = await sequelize.query(
+    `
+      SELECT COUNT(*)::int AS total
+      FROM public.solicitud_documentos sd
+      INNER JOIN public.solicitudes s ON s.id = sd.solicitud_id
+      WHERE s.cliente_id = :clienteId
+    `,
+    {
+      replacements: { clienteId },
+      type: sequelize.QueryTypes.SELECT,
+      transaction
+    }
+  );
+  const documentosCliente = await sequelize.query(
+    `
+      SELECT COUNT(*)::int AS total
+      FROM public.cliente_documentos
+      WHERE cliente_id = :clienteId
+    `,
+    {
+      replacements: { clienteId },
+      type: sequelize.QueryTypes.SELECT,
+      transaction
+    }
+  );
+
+  return {
+    solicitudes: Number(solicitudes?.[0]?.total || 0),
+    prestamos: Number(prestamos?.[0]?.total || 0),
+    cuotas: Number(cuotas?.[0]?.total || 0),
+    documentos_solicitudes: Number(documentosSolicitudes?.[0]?.total || 0),
+    documentos_cliente: Number(documentosCliente?.[0]?.total || 0)
+  };
+};
+
+const deletePhysicalClienteFiles = async (cliente = {}) => {
+  const paths = new Set();
+
+  if (cliente?.documento_identidad_path) {
+    const availability = getDocumentStorageState(cliente.documento_identidad_path);
+    if (availability.valid && availability.absolutePath && availability.exists) {
+      paths.add(availability.absolutePath);
+    }
+  }
+
+  const documentosCliente = await sequelize.query(
+    `
+      SELECT ruta
+      FROM public.cliente_documentos
+      WHERE cliente_id = :clienteId
+    `,
+    {
+      replacements: { clienteId: cliente.id },
+      type: sequelize.QueryTypes.SELECT
+    }
+  );
+
+  (documentosCliente || []).forEach((doc) => {
+    const availability = getDocumentStorageState(doc?.ruta);
+    if (availability.valid && availability.absolutePath && availability.exists) {
+      paths.add(availability.absolutePath);
+    }
+  });
+
+  await Promise.all(Array.from(paths).map((filePath) => fs.promises.unlink(filePath).catch(() => null)));
+};
+
 let clienteReferidosColumnsChecked = false;
 const ensureClienteReferidosColumns = async () => {
   if (clienteReferidosColumnsChecked) return;
@@ -1475,6 +1584,69 @@ router.put(
     res.status(500).json({
       success: false,
       message: 'Error actualizando cliente'
+    });
+  }
+});
+
+// DELETE /api/clientes/:id/hard-delete - Eliminación física real solo para administradores
+router.delete('/:id/hard-delete', authenticateToken, async (req, res) => {
+  try {
+    if (!isAdminUser(req.user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Solo un administrador puede ejecutar la eliminación física de clientes.',
+        code: 'FORBIDDEN'
+      });
+    }
+
+    await ensureClienteDocumentoColumn();
+    await ensureClienteDocumentosTable();
+
+    const cliente = await Cliente.findByPk(req.params.id);
+    if (!cliente) {
+      return res.status(404).json({
+        success: false,
+        message: 'Cliente no encontrado'
+      });
+    }
+
+    const dependencyCounts = await getClienteHardDeleteDependencyCounts(cliente.id);
+    const hasSensitiveDependencies = Object.entries(dependencyCounts).some(([, value]) => Number(value || 0) > 0);
+
+    if (hasSensitiveDependencies) {
+      return res.status(409).json({
+        success: false,
+        message: 'No se puede eliminar físicamente el cliente porque tiene relaciones sensibles asociadas.',
+        policy: 'BLOCK_IF_DEPENDENCIES_EXIST',
+        dependencies: dependencyCounts
+      });
+    }
+
+    await deletePhysicalClienteFiles(cliente);
+
+    await sequelize.transaction(async (transaction) => {
+      await sequelize.query(
+        'DELETE FROM public.cliente_documentos WHERE cliente_id = :clienteId',
+        {
+          replacements: { clienteId: cliente.id },
+          type: sequelize.QueryTypes.DELETE,
+          transaction
+        }
+      );
+
+      await cliente.destroy({ transaction });
+    });
+
+    return res.json({
+      success: true,
+      action: 'ELIMINACION_FISICA',
+      message: 'Cliente eliminado físicamente de la base de datos'
+    });
+  } catch (error) {
+    console.error('Error realizando hard delete de cliente:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error eliminando físicamente el cliente'
     });
   }
 });
