@@ -950,7 +950,7 @@ const enviarCuotasPendientesAdmin = async ({ filtros, adminEmail, user }) => {
 
   const mailResult = await sendMailWithReportCsv({
     to: adminEmail,
-    subject: 'CrediFlash - Cuotas pendientes y en mora',
+    subject: 'CreditFlash - Cuotas pendientes y en mora',
     text: `Reporte generado del ${filtros.fecha_inicio} al ${filtros.fecha_fin}. Total registros: ${rows.length}`,
     filename: `cuotas_pendientes_${Date.now()}.csv`,
     fileBuffer: csvAttachment

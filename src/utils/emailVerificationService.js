@@ -1,5 +1,5 @@
 const DEFAULT_FROM = process.env.SMTP_FROM || process.env.EMAIL_FROM || 'no-reply@crediflash.local';
-const APP_NAME = process.env.APP_NAME || 'CrediFlash';
+const APP_NAME = process.env.APP_NAME || 'CreditFlash';
 
 const createTransporter = async () => {
   let nodemailer;
@@ -70,7 +70,7 @@ const sendOtpVerificationEmail = async ({ to, codigo, expiresInMinutes = 10 }) =
   `;
 
   return transporter.sendMail({
-    from: DEFAULT_FROM,
+    from: `"${APP_NAME}" <${DEFAULT_FROM}>`,
     to,
     subject,
     text,
