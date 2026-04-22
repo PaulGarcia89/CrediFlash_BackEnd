@@ -2,7 +2,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const router = express.Router();
-const { SolicitudDocumento } = require('../models');
+const { SolicitudDocumento, sequelize } = require('../models');
 const { authenticateToken, requirePermission } = require('../middleware/auth');
 const {
   UPLOADS_ROOT,
@@ -14,10 +14,66 @@ const {
 const buildDocumentUrl = (req, documentoId, disposition = 'inline') =>
   `${req.protocol}://${req.get('host')}/api/documentos/${documentoId}/download?disposition=${disposition}`;
 
+const buscarDocumentoGenericoPorId = async (id) => {
+  const solicitudDocs = await sequelize.query(
+    `
+      SELECT
+        id,
+        ruta,
+        nombre_original AS nombre,
+        nombre_original,
+        mime_type,
+        tipo_documento,
+        size_bytes,
+        creado_en,
+        'SOLICITUD' AS source_type
+      FROM public.solicitud_documentos
+      WHERE id = :id
+      LIMIT 1
+    `,
+    {
+      replacements: { id },
+      type: sequelize.QueryTypes.SELECT
+    }
+  );
+
+  if (Array.isArray(solicitudDocs) && solicitudDocs.length > 0) {
+    return solicitudDocs[0];
+  }
+
+  const clienteDocs = await sequelize.query(
+    `
+      SELECT
+        id,
+        ruta,
+        nombre,
+        nombre AS nombre_original,
+        mime_type,
+        tipo AS tipo_documento,
+        size_bytes,
+        creado_en,
+        'CLIENTE' AS source_type
+      FROM public.cliente_documentos
+      WHERE id = :id
+      LIMIT 1
+    `,
+    {
+      replacements: { id },
+      type: sequelize.QueryTypes.SELECT
+    }
+  );
+
+  if (Array.isArray(clienteDocs) && clienteDocs.length > 0) {
+    return clienteDocs[0];
+  }
+
+  return null;
+};
+
 router.get('/:id/url', authenticateToken, requirePermission('documentos.view'), async (req, res) => {
   try {
     const { id } = req.params;
-    const documento = await SolicitudDocumento.findByPk(id);
+    const documento = await buscarDocumentoGenericoPorId(id);
 
     if (!documento) {
       return res.status(404).json({
@@ -26,11 +82,15 @@ router.get('/:id/url', authenticateToken, requirePermission('documentos.view'), 
       });
     }
 
+    const rutaNormalizada = normalizeUploadPath(documento.ruta);
+    const availability = getDocumentStorageState(rutaNormalizada);
+
     return res.json({
       success: true,
       data: {
         id: documento.id,
         tipo: documento.tipo_documento || null,
+        source_type: documento.source_type,
         exists: availability.exists,
         archivo_disponible: availability.exists,
         storage_path: availability.relativePath,
@@ -53,7 +113,7 @@ router.get('/:id/download', authenticateToken, requirePermission('documentos.vie
     const { id } = req.params;
     const { disposition = 'inline' } = req.query;
 
-    const documento = await SolicitudDocumento.findByPk(id);
+    const documento = await buscarDocumentoGenericoPorId(id);
     if (!documento) {
       return res.status(404).json({
         success: false,
@@ -85,7 +145,7 @@ router.get('/:id/download', authenticateToken, requirePermission('documentos.vie
     }
 
     const contentDisposition = disposition === 'attachment' ? 'attachment' : 'inline';
-    const safeFileName = String(documento.nombre_original || 'documento.pdf').replace(/"/g, '');
+    const safeFileName = String(documento.nombre_original || documento.nombre || 'documento.pdf').replace(/"/g, '');
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `${contentDisposition}; filename="${safeFileName}"`);
     console.log(`📄 Documento ${id} servido (${contentDisposition}) por usuario ${req.user?.id || 'N/A'}`);
@@ -105,9 +165,9 @@ router.delete(
   requirePermission('documentos.delete'),
   async (req, res) => {
     try {
-    const { id } = req.params;
+      const { id } = req.params;
 
-    const documento = await SolicitudDocumento.findByPk(id);
+      const documento = await buscarDocumentoGenericoPorId(id);
       if (!documento) {
         return res.status(404).json({
           success: false,
@@ -123,7 +183,21 @@ router.delete(
         await fs.promises.unlink(rutaAbsoluta).catch(() => null);
       }
 
-      await documento.destroy();
+      if (documento.source_type === 'CLIENTE') {
+        await sequelize.query(
+          'DELETE FROM public.cliente_documentos WHERE id = :id',
+          {
+            replacements: { id },
+            type: sequelize.QueryTypes.DELETE
+          }
+        );
+      } else {
+        const solicitudDocumento = await SolicitudDocumento.findByPk(id);
+        if (solicitudDocumento) {
+          await solicitudDocumento.destroy();
+        }
+      }
+
       console.log(`🗑️ Documento ${id} eliminado por usuario ${req.user?.id || 'N/A'}`);
 
       return res.json({
