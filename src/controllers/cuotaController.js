@@ -287,11 +287,67 @@ const cuotaController = {
       
       // Registrar el pago
       const resultado = await cuota.marcarComoPagada(monto_pagado, observaciones);
+
+      const prestamo = await Prestamo.findByPk(cuota.prestamo_id);
+      if (prestamo) {
+        const cuotasPrestamo = await Cuota.findAll({
+          where: { prestamo_id: cuota.prestamo_id },
+          order: [['fecha_vencimiento', 'ASC']]
+        });
+
+        const resumen = cuotasPrestamo.reduce((acc, item) => {
+          const total = parseFloat(item.monto_total || 0);
+          const pagado = parseFloat(item.monto_pagado || 0);
+          const saldo = Math.max(parseFloat((total - pagado).toFixed(2)), 0);
+          acc.pagadoTotal += Math.min(pagado, total);
+          acc.pendienteTotal += saldo;
+          if (saldo > 0) acc.cuotasConSaldo += 1;
+          return acc;
+        }, {
+          pagadoTotal: 0,
+          pendienteTotal: 0,
+          cuotasConSaldo: 0
+        });
+
+        const pagadoTotal = parseFloat(resumen.pagadoTotal.toFixed(2));
+        const pendienteTotal = parseFloat(resumen.pendienteTotal.toFixed(2));
+        const cuotasRestantes = resumen.cuotasConSaldo;
+        const pagosHechos = cuotasPrestamo.length - cuotasRestantes;
+        const status = pendienteTotal <= 0 ? 'PAGADO' : 'EN_MARCHA';
+
+        await prestamo.update({
+          pagado: pagadoTotal,
+          pendiente: pendienteTotal,
+          pagos_hechos: pagosHechos,
+          pagos_pendientes: cuotasRestantes,
+          status,
+          estado: status
+        });
+
+        resultado.prestamo = {
+          id: prestamo.id,
+          saldo_pendiente: pendienteTotal,
+          monto_pendiente: pendienteTotal,
+          cuotas_restantes: cuotasRestantes,
+          pagos_hechos: pagosHechos,
+          pagos_pendientes: cuotasRestantes,
+          pagado: pagadoTotal,
+          pendiente: pendienteTotal,
+          status
+        };
+      }
       
       res.json({
         success: true,
         message: '✅ Pago registrado exitosamente',
-        data: resultado
+        data: {
+          ...resultado,
+          saldo_pendiente: resultado?.prestamo?.saldo_pendiente ?? resultado?.datos?.saldo_pendiente ?? null,
+          monto_pendiente: resultado?.prestamo?.monto_pendiente ?? resultado?.datos?.saldo_pendiente ?? null,
+          cuotas_restantes: resultado?.prestamo?.cuotas_restantes ?? null,
+          pagos_hechos: resultado?.prestamo?.pagos_hechos ?? null,
+          pagos_pendientes: resultado?.prestamo?.pagos_pendientes ?? null
+        }
       });
     } catch (error) {
       console.error('❌ Error en registrarPago:', error);

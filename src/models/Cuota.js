@@ -141,6 +141,24 @@ Cuota.prototype.marcarComoPagada = async function(montoPagado, observaciones = n
   }
 };
 
+Object.defineProperty(Cuota.prototype, 'saldo_pendiente', {
+  get() {
+    const total = parseFloat(this.monto_total || 0);
+    const pagado = parseFloat(this.monto_pagado || 0);
+    return parseFloat(Math.max(total - pagado, 0).toFixed(2));
+  },
+  enumerable: true,
+  configurable: true
+});
+
+Object.defineProperty(Cuota.prototype, 'monto_pendiente', {
+  get() {
+    return this.saldo_pendiente;
+  },
+  enumerable: true,
+  configurable: true
+});
+
 // Método para verificar si la cuota está vencida
 Cuota.prototype.estaVencida = function() {
   if (!this.fecha_vencimiento || this.estado === 'PAGADO') {

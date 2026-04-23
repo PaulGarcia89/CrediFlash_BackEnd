@@ -12,6 +12,29 @@ try {
 }
 
 class RatingService {
+    resolveCuotasRestantes(prestamo = {}) {
+        const numSemanas = Number(prestamo.num_semanas);
+        const pagosHechos = Number(prestamo.pagos_hechos);
+        if (
+            Number.isFinite(numSemanas) &&
+            numSemanas >= 0 &&
+            Number.isFinite(pagosHechos) &&
+            pagosHechos >= 0
+        ) {
+            return Math.max(Math.round(numSemanas - pagosHechos), 0);
+        }
+
+        const pagosPendientes = Number(prestamo.pagos_pendientes);
+        if (
+            Number.isFinite(pagosPendientes) &&
+            pagosPendientes >= 0 &&
+            Number.isInteger(pagosPendientes)
+        ) {
+            return Math.max(pagosPendientes, 0);
+        }
+
+        return 0;
+    }
     
     // Función principal CON CÁLCULOS DETALLADOS
     async getClientRating(nombre, input = {}) {
@@ -124,14 +147,14 @@ class RatingService {
             const prestamosEnMora = prestamos.filter(p => {
                 const status = (p.status || '').toUpperCase();
                 const pendiente = parseFloat(p.pendiente) || 0;
-                const pagosPendientes = parseFloat(p.pagos_pendientes) || 0;
+                const pagosPendientes = this.resolveCuotasRestantes(p);
                 const moraPorStatus = ['MORA', 'VENCIDO', 'EN_MORA', 'MOROSO'].includes(status);
                 const moraPorSaldo = pendiente > 0 && pagosPendientes > 0 && status !== 'PAGADO';
                 return moraPorStatus || moraPorSaldo;
             }).length;
             const ultimoPrestamo = prestamos[0];
 
-            const totalPagos = prestamos.reduce((sum, p) => sum + (parseFloat(p.pagos_hechos) || 0) + (parseFloat(p.pagos_pendientes) || 0), 0);
+            const totalPagos = prestamos.reduce((sum, p) => sum + (parseFloat(p.pagos_hechos) || 0) + this.resolveCuotasRestantes(p), 0);
             const pagosHechos = prestamos.reduce((sum, p) => sum + (parseFloat(p.pagos_hechos) || 0), 0);
             const puntualidadPct = totalPagos > 0 ? pagosHechos / totalPagos : 0;
 
@@ -427,20 +450,21 @@ class RatingService {
         
         // Analizar cada préstamo individualmente
         prestamos.forEach((prestamo, index) => {
+            const cuotasRestantes = this.resolveCuotasRestantes(prestamo);
             const analisisPrestamo = {
                 numero: index + 1,
                 fecha: prestamo.fecha,
                 monto: parseFloat(prestamo.monto_solicitado) || 0,
                 interes: parseFloat(prestamo.interes) || 0,
                 pagosHechos: parseInt(prestamo.pagos_hechos) || 0,
-                pagosPendientes: parseInt(prestamo.pagos_pendientes) || 0,
+                pagosPendientes: cuotasRestantes,
                 pagado: parseFloat(prestamo.pagado) || 0,
                 estatus: prestamo.estatus || '',
                 dias: prestamo.dias || 0,
                 semanas: prestamo.semanas || 0,
                 plazoCalculado: prestamo.dias > 0 ? prestamo.dias : (prestamo.semanas * 7),
-                completado: prestamo.estatus?.includes('NO DEBE NADA') || (parseInt(prestamo.pagos_pendientes) || 0) === 0,
-                enMora: (parseInt(prestamo.pagos_pendientes) || 0) > 0
+                completado: prestamo.estatus?.includes('NO DEBE NADA') || cuotasRestantes === 0,
+                enMora: cuotasRestantes > 0
             };
             
             // Acumular valores
@@ -689,7 +713,7 @@ class RatingService {
             interes: p.interes,
             plazo: `${p.dias || p.semanas * 7} días`,
             pagosHechos: p.pagos_hechos,
-            pagosPendientes: p.pagos_pendientes,
+            pagosPendientes: this.resolveCuotasRestantes(p),
             pagado: p.pagado,
             estatus: p.estatus,
             modalidad: p.modalidad

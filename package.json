@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "test": "node --test tests/**/*.test.js"
+    "test": "node --test tests/**/*.test.js",
+    "reconcile:cuotas": "node scripts/reconcile_quota_records.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

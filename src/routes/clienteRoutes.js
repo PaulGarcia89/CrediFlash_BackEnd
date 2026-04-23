@@ -65,12 +65,6 @@ const resolveSaldoPendiente = (prestamo = {}) => {
   const byTotals = Number((totalPagar - pagado).toFixed(2));
   if (byTotals > 0) return byTotals;
 
-  const pagosPendientes = Number(prestamo.pagos_pendientes);
-  const pagoSemanal = toMoneyNumber(prestamo.pagos_semanales);
-  if (Number.isFinite(pagosPendientes) && Number.isFinite(pagoSemanal)) {
-    return Math.max(Number((pagosPendientes * pagoSemanal).toFixed(2)), 0);
-  }
-
   return 0;
 };
 
