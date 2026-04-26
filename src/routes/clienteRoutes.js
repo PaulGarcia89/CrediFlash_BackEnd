@@ -13,6 +13,7 @@ const {
   resolveAbsoluteUploadPath,
   deduplicateDocuments
 } = require('../utils/documentStorage');
+const { buildClienteNombreCompleto } = require('../utils/clienteDisplay');
 const { authenticateToken, requirePermission } = require('../middleware/auth');
 const { sendOtpVerificationEmail, verifySmtpConfig } = require('../utils/emailVerificationService');
 
@@ -65,6 +66,25 @@ const resolveSaldoPendiente = (prestamo = {}) => {
   const byTotals = Number((totalPagar - pagado).toFixed(2));
   if (byTotals > 0) return byTotals;
 
+  return 0;
+};
+
+const syncPrestamosClienteNombreCompleto = async (clienteId, nombreCompleto, transaction) => {
+  if (!clienteId || !nombreCompleto) return 0;
+
+  await sequelize.query(
+    `
+      UPDATE public.prestamos AS p
+      SET nombre_completo = :nombreCompleto
+      FROM public.solicitudes AS s
+      WHERE p.solicitud_id = s.id
+        AND s.cliente_id = :clienteId
+    `,
+    {
+      replacements: { clienteId, nombreCompleto },
+      transaction
+    }
+  );
   return 0;
 };
 
@@ -1170,6 +1190,7 @@ router.get('/:id/prestamos', authenticateToken, requirePermission('prestamos.vie
     const prestamos = rows.map((prestamo) => ({
       ...prestamo.toJSON(),
       cliente_id: prestamo?.solicitud?.cliente_id || null,
+      nombre_completo: buildClienteNombreCompleto(prestamo?.solicitud?.cliente) || prestamo.nombre_completo || null,
       saldo_pendiente: resolveSaldoPendiente(prestamo.toJSON())
     }));
 
@@ -1600,6 +1621,11 @@ router.put(
           transaction
         });
         previousIdentityDocs = replaced.previous || [];
+      }
+
+      if (updates.nombre !== undefined || updates.apellido !== undefined) {
+        const nombreCompletoActualizado = buildClienteNombreCompleto(cliente);
+        await syncPrestamosClienteNombreCompleto(cliente.id, nombreCompletoActualizado, transaction);
       }
     });
 

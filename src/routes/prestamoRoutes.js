@@ -16,6 +16,7 @@ const {
   applyWeeklyPaymentToQuotas,
   round2
 } = require('../utils/weeklyPaymentApplication');
+const { buildClienteNombreCompleto } = require('../utils/clienteDisplay');
 
 const toMoneyNumber = (value) => {
   const numeric = Number(value);
@@ -460,16 +461,22 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
 
     if (search && String(search).trim() !== '') {
       const term = String(search).trim().replace(/\s+/g, ' ').toUpperCase();
-      const searchCondition = sequelize.where(
-        sequelize.fn(
-          'regexp_replace',
-          sequelize.fn('upper', sequelize.col('Prestamo.nombre_completo')),
-          '\\s+',
-          ' ',
-          'g'
-        ),
-        { [Op.like]: `%${term}%` }
-      );
+      const searchCondition = {
+        [Op.or]: [
+          sequelize.where(
+            sequelize.fn(
+              'regexp_replace',
+              sequelize.fn('upper', sequelize.col('Prestamo.nombre_completo')),
+              '\\s+',
+              ' ',
+              'g'
+            ),
+            { [Op.like]: `%${term}%` }
+          ),
+          { '$solicitud.cliente.nombre$': { [Op.iLike]: `%${term}%` } },
+          { '$solicitud.cliente.apellido$': { [Op.iLike]: `%${term}%` } }
+        ]
+      };
 
       const andConditions = Array.isArray(where[Op.and]) ? where[Op.and] : [];
       where[Op.and] = [...andConditions, searchCondition];
@@ -538,10 +545,14 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
       const contratoDoc = contratoBySolicitud.get(solicitudId);
       const cuotasRestantes = resolveCuotasRestantes(raw);
       const saldoPendiente = resolveSaldoPendiente(raw);
+      const nombreCompletoCliente = buildClienteNombreCompleto(raw?.solicitud?.cliente || {});
 
       return {
         ...raw,
         cliente_id: raw?.solicitud?.cliente_id || null,
+        nombre_completo: nombreCompletoCliente || raw.nombre_completo || null,
+        nombre_completo_registro: raw.nombre_completo || null,
+        cliente_nombre: nombreCompletoCliente || raw.nombre_completo || null,
         saldo_pendiente: saldoPendiente,
         monto_pendiente: saldoPendiente,
         cuotas_restantes: cuotasRestantes,
@@ -560,6 +571,7 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
         id: item.id,
         cliente_id: item.cliente_id,
         nombre_completo: item.nombre_completo,
+        nombre_completo_registro: item.nombre_completo_registro,
         fecha_inicio: item.fecha_inicio,
         monto_solicitado: item.monto_solicitado,
         interes: item.interes,
@@ -582,6 +594,7 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
           { key: 'id', label: 'id' },
           { key: 'cliente_id', label: 'cliente_id' },
           { key: 'nombre_completo', label: 'nombre_completo' },
+          { key: 'nombre_completo_registro', label: 'nombre_completo_registro' },
           { key: 'fecha_inicio', label: 'fecha_inicio' },
           { key: 'monto_solicitado', label: 'monto_solicitado' },
           { key: 'interes', label: 'interes' },
