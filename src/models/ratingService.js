@@ -13,24 +13,27 @@ try {
 
 class RatingService {
     resolveCuotasRestantes(prestamo = {}) {
+        const cuotasRestantesDirectas = Number(
+            prestamo.cuotas_restantes ??
+            prestamo.cuotasRestantes ??
+            prestamo.pagos_pendientes
+        );
+        if (
+            Number.isFinite(cuotasRestantesDirectas) &&
+            cuotasRestantesDirectas >= 0
+        ) {
+            return Math.max(Math.round(cuotasRestantesDirectas), 0);
+        }
+
+        const pagosHechosDirectos = Number(prestamo.pagos_hechos);
         const numSemanas = Number(prestamo.num_semanas);
-        const pagosHechos = Number(prestamo.pagos_hechos);
         if (
             Number.isFinite(numSemanas) &&
             numSemanas >= 0 &&
-            Number.isFinite(pagosHechos) &&
-            pagosHechos >= 0
+            Number.isFinite(pagosHechosDirectos) &&
+            pagosHechosDirectos >= 0
         ) {
-            return Math.max(Math.round(numSemanas - pagosHechos), 0);
-        }
-
-        const pagosPendientes = Number(prestamo.pagos_pendientes);
-        if (
-            Number.isFinite(pagosPendientes) &&
-            pagosPendientes >= 0 &&
-            Number.isInteger(pagosPendientes)
-        ) {
-            return Math.max(pagosPendientes, 0);
+            return Math.max(Math.round(numSemanas - pagosHechosDirectos), 0);
         }
 
         return 0;
@@ -390,28 +393,55 @@ class RatingService {
 
             const queryText = `
                 SELECT 
-                    id,
-                    solicitud_id,
-                    fecha_inicio,
-                    mes,
-                    anio,
-                    nombre_completo,
-                    monto_solicitado,
-                    interes,
-                    modalidad,
-                    num_semanas,
-                    num_dias,
-                    fecha_vencimiento,
-                    total_pagar,
-                    pagos_semanales,
-                    pagos_hechos,
-                    pagos_pendientes,
-                    pagado,
-                    status,
-                    pendiente
-                FROM prestamos
-                WHERE nombre_completo ILIKE $1
-                ORDER BY fecha_inicio DESC
+                    p.id,
+                    p.solicitud_id,
+                    p.fecha_inicio,
+                    p.mes,
+                    p.anio,
+                    p.nombre_completo,
+                    p.monto_solicitado,
+                    p.interes,
+                    p.modalidad,
+                    p.num_semanas,
+                    p.num_dias,
+                    p.fecha_vencimiento,
+                    p.total_pagar,
+                    p.pagos_semanales,
+                    p.pagado,
+                    p.status,
+                    p.pendiente,
+                    COUNT(c.id)::int AS cuotas_totales,
+                    COALESCE(SUM(
+                        CASE
+                            WHEN COALESCE(c.monto_total, 0) > 0
+                                 AND COALESCE(c.monto_pagado, 0) >= COALESCE(c.monto_total, 0)
+                            THEN 1 ELSE 0
+                        END
+                    ), 0)::int AS pagos_hechos,
+                    COALESCE(SUM(
+                        CASE
+                            WHEN COALESCE(c.monto_total, 0) > 0
+                                 AND COALESCE(c.monto_pagado, 0) < COALESCE(c.monto_total, 0)
+                            THEN 1 ELSE 0
+                        END
+                    ), 0)::int AS pagos_pendientes,
+                    COALESCE(SUM(
+                        GREATEST(COALESCE(c.monto_total, 0) - COALESCE(c.monto_pagado, 0), 0)
+                    ), 0)::numeric(15,2) AS saldo_pendiente,
+                    COALESCE(SUM(
+                        CASE
+                            WHEN COALESCE(c.monto_total, 0) > 0
+                                 AND COALESCE(c.monto_pagado, 0) < COALESCE(c.monto_total, 0)
+                                 AND COALESCE(c.monto_pagado, 0) > 0
+                            THEN COALESCE(c.monto_pagado, 0)
+                            ELSE 0
+                        END
+                    ), 0)::numeric(15,2) AS abono_parcial_acumulado
+                FROM prestamos p
+                LEFT JOIN cuotas c ON c.prestamo_id = p.id
+                WHERE p.nombre_completo ILIKE $1
+                GROUP BY p.id
+                ORDER BY p.fecha_inicio DESC
             `;
 
             const prestamos = await sequelize.query(queryText, {

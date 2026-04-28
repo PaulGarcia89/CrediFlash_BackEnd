@@ -14,6 +14,7 @@ const {
   deduplicateDocuments
 } = require('../utils/documentStorage');
 const { buildClienteNombreCompleto } = require('../utils/clienteDisplay');
+const { resolveLoanPaymentCounters } = require('../utils/prestamoAbonos');
 const { authenticateToken, requirePermission } = require('../middleware/auth');
 const { sendOtpVerificationEmail, verifySmtpConfig } = require('../utils/emailVerificationService');
 
@@ -55,18 +56,6 @@ const toMoneyNumber = (value) => {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return null;
   return Number(numeric.toFixed(2));
-};
-
-const resolveSaldoPendiente = (prestamo = {}) => {
-  const pendiente = toMoneyNumber(prestamo.pendiente);
-  if (pendiente !== null) return Math.max(pendiente, 0);
-
-  const totalPagar = toMoneyNumber(prestamo.total_pagar) || 0;
-  const pagado = toMoneyNumber(prestamo.pagado) || 0;
-  const byTotals = Number((totalPagar - pagado).toFixed(2));
-  if (byTotals > 0) return byTotals;
-
-  return 0;
 };
 
 const buildFinancialSummaryFromBase = (prestamo = {}) => {
@@ -1193,8 +1182,15 @@ router.get('/:id/prestamos', authenticateToken, requirePermission('prestamos.vie
           as: 'solicitud',
           where: { cliente_id: id },
           required: true
+        },
+        {
+          model: Cuota,
+          as: 'cuotas',
+          attributes: ['id', 'monto_total', 'monto_pagado', 'estado', 'fecha_vencimiento'],
+          required: false
         }
       ],
+      distinct: true,
       order: [['fecha_inicio', 'DESC']],
       limit: parseInt(limit),
       offset
@@ -1230,7 +1226,8 @@ router.get('/:id/prestamos', authenticateToken, requirePermission('prestamos.vie
       const contratoUrl = contratoAvailability.exists
         ? construirUrlDocumento(req, contratoAvailability.relativePath)
         : null;
-      const contratoActivo = contratoAvailability.exists && Number(saldoPendiente || 0) > 0;
+      const counters = resolveLoanPaymentCounters(raw);
+      const contratoActivo = contratoAvailability.exists && Number(counters.saldoPendiente || 0) > 0;
 
       return {
         ...raw,
@@ -1240,8 +1237,12 @@ router.get('/:id/prestamos', authenticateToken, requirePermission('prestamos.vie
         pagos_semanales_bruto: financialSummary.pagosSemanales,
         total_pagar: raw.total_pagar,
         pagos_semanales: raw.pagos_semanales,
-        pendiente: raw.pendiente,
-        saldo_pendiente: raw.pendiente,
+        pendiente: counters.saldoPendiente,
+        saldo_pendiente: counters.saldoPendiente,
+        monto_pendiente: counters.saldoPendiente,
+        pagos_hechos: counters.pagosHechos,
+        cuotas_restantes: counters.cuotasRestantes,
+        pagos_pendientes: counters.cuotasRestantes,
         abono_parcial_acumulado: raw.abono_parcial_acumulado || 0,
         contrato_credito_id: contratoAvailability.exists ? (contratoDoc?.id || null) : null,
         contrato_credito_nombre: contratoAvailability.exists ? (contratoDoc?.nombre_original || null) : null,

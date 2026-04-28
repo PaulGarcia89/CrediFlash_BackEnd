@@ -18,7 +18,10 @@ const {
 } = require('../utils/weeklyPaymentApplication');
 const { buildClienteNombreCompleto } = require('../utils/clienteDisplay');
 const { getDocumentStorageState } = require('../utils/documentStorage');
-const { ensurePrestamoAbonoParcialColumns } = require('../utils/prestamoAbonos');
+const {
+  ensurePrestamoAbonoParcialColumns,
+  resolveLoanPaymentCounters
+} = require('../utils/prestamoAbonos');
 
 const toMoneyNumber = (value) => {
   const numeric = Number(value);
@@ -44,18 +47,6 @@ const buildFinancialSummaryFromBase = (prestamo = {}) => {
   };
 };
 
-const resolveSaldoPendiente = (prestamo = {}) => {
-  const pendiente = toMoneyNumber(prestamo.pendiente);
-  if (pendiente !== null) return Math.max(pendiente, 0);
-
-  const totalPagar = toMoneyNumber(prestamo.total_pagar) || 0;
-  const pagado = toMoneyNumber(prestamo.pagado) || 0;
-  const byTotals = Number((totalPagar - pagado).toFixed(2));
-  if (byTotals > 0) return byTotals;
-
-  return 0;
-};
-
 const normalizeOperationalStatus = (prestamo = {}) => {
   const rawStatus = String(prestamo.status || '').trim().toUpperCase();
   const cuotasRestantes = resolveCuotasRestantes(prestamo);
@@ -72,50 +63,17 @@ const normalizeOperationalStatus = (prestamo = {}) => {
 const resolveCuotasRestantes = (prestamo = {}) => {
   // Prioridad de fuentes para evitar inconsistencias por redondeo:
   // 1) status textual "LE QUEDAN X PAGOS"
-  // 2) num_semanas - pagos_hechos
-  // 3) pagos_pendientes solo si claramente es una cantidad
-  // 4) pendiente / pagos_semanales (solo fallback)
   const rawStatus = String(prestamo.status || '').toUpperCase();
   const matchStatus = rawStatus.match(/LE\s+QUEDAN\s+(\d+)\s+PAGOS?/);
   if (matchStatus?.[1]) {
     return Math.max(parseInt(matchStatus[1], 10), 0);
   }
 
-  const numSemanas = Number(prestamo.num_semanas);
-  const pagosHechos = Number(prestamo.pagos_hechos);
-  if (
-    Number.isFinite(numSemanas) &&
-    numSemanas >= 0 &&
-    Number.isFinite(pagosHechos) &&
-    pagosHechos >= 0
-  ) {
-    return Math.max(Math.round(numSemanas - pagosHechos), 0);
+  const counters = resolveLoanPaymentCounters(prestamo);
+  if (Number.isFinite(counters.cuotasRestantes)) {
+    return Math.max(Math.round(counters.cuotasRestantes), 0);
   }
 
-  const pagosPendientes = Number(prestamo.pagos_pendientes);
-  if (
-    Number.isFinite(pagosPendientes) &&
-    pagosPendientes >= 0 &&
-    Number.isInteger(pagosPendientes) &&
-    (!Number.isFinite(numSemanas) || pagosPendientes <= numSemanas)
-  ) {
-    return Math.max(pagosPendientes, 0);
-  }
-
-  const pendiente = toMoneyNumber(prestamo.pendiente);
-  const pagoSemanal = toMoneyNumber(prestamo.pagos_semanales);
-  if (pendiente !== null && pendiente > 0 && pagoSemanal !== null && pagoSemanal > 0) {
-    const raw = pendiente / pagoSemanal;
-    const nearest = Math.round(raw);
-    // Tolerancia por redondeo monetario (ej: 1540 / 128.33 = 12.0009)
-    if (Math.abs(raw - nearest) <= 0.02) {
-      return Math.max(nearest, 0);
-    }
-
-    return Math.max(Math.ceil(raw), 0);
-  }
-
-  if (pendiente !== null && pendiente > 0) return 1;
   return 0;
 };
 
@@ -551,6 +509,17 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
       queryOptions.offset = offset;
     }
 
+    queryOptions.distinct = true;
+    queryOptions.include = [
+      ...queryOptions.include,
+      {
+        model: Cuota,
+        as: 'cuotas',
+        attributes: ['id', 'monto_total', 'monto_pagado', 'estado', 'fecha_vencimiento'],
+        required: false
+      }
+    ];
+
     const { count, rows: prestamos } = await Prestamo.findAndCountAll(queryOptions);
     const solicitudIds = prestamos
       .map((prestamo) => prestamo?.solicitud?.id || prestamo?.solicitud_id)
@@ -578,7 +547,6 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
       const solicitudId = raw?.solicitud?.id || raw?.solicitud_id;
       const contratoDoc = contratoBySolicitud.get(solicitudId);
       const cuotasRestantes = resolveCuotasRestantes(raw);
-      const saldoPendiente = resolveSaldoPendiente(raw);
       const nombreCompletoCliente = buildClienteNombreCompleto(raw?.solicitud?.cliente || {});
       const contratoAvailability = resolveContratoPrestamoAvailability(raw, contratoDoc);
       const contratoUrl = contratoAvailability.existe
@@ -587,7 +555,8 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
             : construirUrlArchivoRelativo(req, contratoAvailability.storage_path || raw?.contrato))
         : null;
       const financialSummary = buildFinancialSummaryFromBase(raw);
-      const contratoActivo = contratoAvailability.existe && Number(saldoPendiente || 0) > 0;
+      const counters = resolveLoanPaymentCounters(raw);
+      const contratoActivo = contratoAvailability.existe && Number(counters.saldoPendiente || 0) > 0;
 
       return {
         ...raw,
@@ -605,11 +574,12 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
         total_pagar: raw.total_pagar,
         pagos_semanales: raw.pagos_semanales,
         ganancias: raw.ganancias,
-        pendiente: raw.pendiente,
-        saldo_pendiente: raw.pendiente,
-        monto_pendiente: raw.pendiente,
-        cuotas_restantes: cuotasRestantes,
-        pagos_pendientes: cuotasRestantes,
+        pendiente: counters.saldoPendiente,
+        saldo_pendiente: counters.saldoPendiente,
+        monto_pendiente: counters.saldoPendiente,
+        pagos_hechos: counters.pagosHechos,
+        cuotas_restantes: counters.cuotasRestantes,
+        pagos_pendientes: counters.cuotasRestantes,
         abono_parcial_acumulado: raw.abono_parcial_acumulado || 0,
         contrato_disponible: contratoAvailability.existe,
         contrato_activo: contratoActivo,
@@ -644,6 +614,7 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
         pendiente_registro: item.pendiente_registro,
         saldo_pendiente: item.saldo_pendiente,
         monto_pendiente: item.monto_pendiente,
+        pagos_hechos: item.pagos_hechos,
         contrato_activo: item.contrato_activo,
         status: item.status,
         fecha_vencimiento: item.fecha_vencimiento,
