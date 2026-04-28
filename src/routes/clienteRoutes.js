@@ -1200,9 +1200,36 @@ router.get('/:id/prestamos', authenticateToken, requirePermission('prestamos.vie
       offset
     });
 
+    const solicitudIds = rows
+      .map((prestamo) => prestamo?.solicitud?.id || prestamo?.solicitud_id)
+      .filter(Boolean);
+
+    const contratos = solicitudIds.length
+      ? await SolicitudDocumento.findAll({
+          where: {
+            solicitud_id: { [Op.in]: solicitudIds },
+            tipo_documento: 'CONTRATO_CREDITO'
+          },
+          order: [['creado_en', 'DESC']]
+        })
+      : [];
+
+    const contratoBySolicitud = new Map();
+    contratos.forEach((doc) => {
+      if (!contratoBySolicitud.has(doc.solicitud_id)) {
+        contratoBySolicitud.set(doc.solicitud_id, doc);
+      }
+    });
+
     const prestamos = rows.map((prestamo) => {
       const raw = prestamo.toJSON();
       const financialSummary = buildFinancialSummaryFromBase(raw);
+      const solicitudId = raw?.solicitud?.id || raw?.solicitud_id;
+      const contratoDoc = contratoBySolicitud.get(solicitudId);
+      const contratoAvailability = contratoDoc ? getDocumentStorageState(contratoDoc.ruta) : { exists: false, relativePath: null };
+      const contratoUrl = contratoAvailability.exists
+        ? construirUrlDocumento(req, contratoAvailability.relativePath)
+        : null;
 
       return {
         ...raw,
@@ -1215,6 +1242,21 @@ router.get('/:id/prestamos', authenticateToken, requirePermission('prestamos.vie
         pendiente: raw.pendiente,
         saldo_pendiente: raw.pendiente,
         abono_parcial_acumulado: raw.abono_parcial_acumulado || 0,
+        contrato_credito_id: contratoAvailability.exists ? (contratoDoc?.id || null) : null,
+        contrato_credito_nombre: contratoAvailability.exists ? (contratoDoc?.nombre_original || null) : null,
+        contrato_credito_size_bytes: contratoAvailability.exists ? (contratoDoc?.size_bytes || null) : null,
+        contrato_credito_url: contratoUrl,
+        contrato_url: contratoUrl,
+        contrato_storage_path: contratoAvailability.exists ? contratoAvailability.relativePath : null,
+        contrato_disponible: contratoAvailability.exists,
+        contrato: contratoAvailability.exists ? {
+          id: contratoDoc?.id || null,
+          nombre: contratoDoc?.nombre_original || null,
+          tipo: contratoDoc?.tipo_documento || 'CONTRATO_CREDITO',
+          storage_path: contratoAvailability.relativePath,
+          url: contratoUrl,
+          url_descarga: contratoUrl
+        } : null,
         total_pagar_registro: prestamo.total_pagar,
         pagos_semanales_registro: prestamo.pagos_semanales,
         pendiente_registro: prestamo.pendiente
