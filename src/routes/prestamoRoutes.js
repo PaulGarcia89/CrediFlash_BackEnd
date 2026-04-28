@@ -587,6 +587,7 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
             : construirUrlArchivoRelativo(req, contratoAvailability.storage_path || raw?.contrato))
         : null;
       const financialSummary = buildFinancialSummaryFromBase(raw);
+      const contratoActivo = contratoAvailability.existe && Number(saldoPendiente || 0) > 0;
 
       return {
         ...raw,
@@ -611,6 +612,7 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
         pagos_pendientes: cuotasRestantes,
         abono_parcial_acumulado: raw.abono_parcial_acumulado || 0,
         contrato_disponible: contratoAvailability.existe,
+        contrato_activo: contratoActivo,
         contrato_storage_path: contratoAvailability.storage_path,
         contrato_credito_id: contratoAvailability.existe ? (contratoDoc?.id || null) : null,
         status_normalizado: normalizeOperationalStatus(raw),
@@ -642,6 +644,7 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
         pendiente_registro: item.pendiente_registro,
         saldo_pendiente: item.saldo_pendiente,
         monto_pendiente: item.monto_pendiente,
+        contrato_activo: item.contrato_activo,
         status: item.status,
         fecha_vencimiento: item.fecha_vencimiento,
         contrato: item.contrato
@@ -671,6 +674,7 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
           { key: 'pendiente_registro', label: 'pendiente_registro' },
           { key: 'saldo_pendiente', label: 'saldo_pendiente' },
           { key: 'monto_pendiente', label: 'monto_pendiente' },
+          { key: 'contrato_activo', label: 'contrato_activo' },
           { key: 'status', label: 'status' },
           { key: 'fecha_vencimiento', label: 'fecha_vencimiento' },
           { key: 'contrato', label: 'contrato' }

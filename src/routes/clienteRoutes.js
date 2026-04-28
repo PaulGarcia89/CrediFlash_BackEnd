@@ -1230,6 +1230,7 @@ router.get('/:id/prestamos', authenticateToken, requirePermission('prestamos.vie
       const contratoUrl = contratoAvailability.exists
         ? construirUrlDocumento(req, contratoAvailability.relativePath)
         : null;
+      const contratoActivo = contratoAvailability.exists && Number(saldoPendiente || 0) > 0;
 
       return {
         ...raw,
@@ -1249,6 +1250,7 @@ router.get('/:id/prestamos', authenticateToken, requirePermission('prestamos.vie
         contrato_url: contratoUrl,
         contrato_storage_path: contratoAvailability.exists ? contratoAvailability.relativePath : null,
         contrato_disponible: contratoAvailability.exists,
+        contrato_activo: contratoActivo,
         contrato: contratoAvailability.exists ? {
           id: contratoDoc?.id || null,
           nombre: contratoDoc?.nombre_original || null,
