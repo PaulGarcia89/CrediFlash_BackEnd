@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const { sequelize, Prestamo, Cuota } = require('../src/models');
+const { ensurePrestamoAbonoParcialColumns } = require('../src/utils/prestamoAbonos');
 
 const round2 = (value) => Number((Number(value) || 0).toFixed(2));
 const parseArgs = () => {
@@ -74,6 +75,7 @@ const run = async () => {
   const { apply, verbose, prestamoId } = parseArgs();
 
   await sequelize.authenticate();
+  await ensurePrestamoAbonoParcialColumns(sequelize);
 
   const where = {};
   if (prestamoId) {
@@ -102,6 +104,19 @@ const run = async () => {
     const resumen = summarizeQuotas(cuotas);
     const pagosHechos = cuotas.length - resumen.cuotasConSaldo;
     const pagosPendientes = resumen.cuotasConSaldo;
+    const abonoParcialAcumulado = (() => {
+      const primeraCuotaPendiente = cuotas
+        .slice()
+        .sort((a, b) => {
+          const fechaA = new Date(a.fecha_vencimiento || 0).getTime();
+          const fechaB = new Date(b.fecha_vencimiento || 0).getTime();
+          if (fechaA !== fechaB) return fechaA - fechaB;
+          return String(a.id || '').localeCompare(String(b.id || ''));
+        })
+        .find((cuota) => round2(cuota.monto_total) > round2(cuota.monto_pagado));
+
+      return primeraCuotaPendiente ? round2(primeraCuotaPendiente.monto_pagado) : 0;
+    })();
     const estado = resolveLoanStatus({
       pagadoTotal: round2(resumen.pagadoTotal),
       pendienteTotal: round2(resumen.pendienteTotal),
@@ -114,6 +129,7 @@ const run = async () => {
       pendiente: round2(resumen.pendienteTotal),
       pagos_hechos: pagosHechos,
       pagos_pendientes: pagosPendientes,
+      abono_parcial_acumulado: abonoParcialAcumulado,
       status: estado
     };
 

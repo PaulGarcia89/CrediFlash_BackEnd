@@ -69,6 +69,19 @@ const resolveSaldoPendiente = (prestamo = {}) => {
   return 0;
 };
 
+const buildFinancialSummaryFromBase = (prestamo = {}) => {
+  const montoSolicitado = toMoneyNumber(prestamo.monto_solicitado) || 0;
+  const interes = toMoneyNumber(prestamo.interes) || 0;
+  const numSemanas = Number(prestamo.num_semanas) || 0;
+  const pagado = toMoneyNumber(prestamo.pagado) || 0;
+
+  const totalPagar = Number((montoSolicitado + (montoSolicitado * interes / 100)).toFixed(2));
+  const pagosSemanales = numSemanas > 0 ? Number((totalPagar / numSemanas).toFixed(2)) : totalPagar;
+  const pendiente = Math.max(Number((totalPagar - pagado).toFixed(2)), 0);
+
+  return { totalPagar, pagosSemanales, pendiente };
+};
+
 const syncPrestamosClienteNombreCompleto = async (clienteId, nombreCompleto, transaction) => {
   if (!clienteId || !nombreCompleto) return 0;
 
@@ -1187,12 +1200,26 @@ router.get('/:id/prestamos', authenticateToken, requirePermission('prestamos.vie
       offset
     });
 
-    const prestamos = rows.map((prestamo) => ({
-      ...prestamo.toJSON(),
-      cliente_id: prestamo?.solicitud?.cliente_id || null,
-      nombre_completo: buildClienteNombreCompleto(prestamo?.solicitud?.cliente) || prestamo.nombre_completo || null,
-      saldo_pendiente: resolveSaldoPendiente(prestamo.toJSON())
-    }));
+    const prestamos = rows.map((prestamo) => {
+      const raw = prestamo.toJSON();
+      const financialSummary = buildFinancialSummaryFromBase(raw);
+
+      return {
+        ...raw,
+        cliente_id: prestamo?.solicitud?.cliente_id || null,
+        nombre_completo: buildClienteNombreCompleto(prestamo?.solicitud?.cliente) || prestamo.nombre_completo || null,
+        total_pagar_bruto: financialSummary.totalPagar,
+        pagos_semanales_bruto: financialSummary.pagosSemanales,
+        total_pagar: raw.total_pagar,
+        pagos_semanales: raw.pagos_semanales,
+        pendiente: raw.pendiente,
+        saldo_pendiente: raw.pendiente,
+        abono_parcial_acumulado: raw.abono_parcial_acumulado || 0,
+        total_pagar_registro: prestamo.total_pagar,
+        pagos_semanales_registro: prestamo.pagos_semanales,
+        pendiente_registro: prestamo.pendiente
+      };
+    });
 
     return res.json({
       success: true,

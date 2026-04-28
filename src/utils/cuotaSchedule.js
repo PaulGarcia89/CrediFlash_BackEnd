@@ -1,5 +1,3 @@
-const FRIDAY_INDEX = 5;
-
 const parseFlexibleDate = (value) => {
   if (!value) return null;
 
@@ -30,6 +28,16 @@ const normalizeToNoon = (value) => {
   return date;
 };
 
+const addDays = (value, days = 0) => {
+  const date = normalizeToNoon(value);
+  if (!date) return null;
+
+  const result = new Date(date);
+  result.setDate(result.getDate() + Number(days || 0));
+  result.setHours(12, 0, 0, 0);
+  return result;
+};
+
 const formatDateOnly = (value) => {
   const date = normalizeToNoon(value);
   if (!date) return null;
@@ -41,18 +49,15 @@ const formatDateOnly = (value) => {
 };
 
 const getNextFridayStrict = (referenceDate = new Date()) => {
-  const base = normalizeToNoon(referenceDate) || normalizeToNoon(new Date());
-  const dayOfWeek = base.getDay();
-  let daysUntilFriday = (FRIDAY_INDEX - dayOfWeek + 7) % 7;
+  return addDays(referenceDate, 7);
+};
 
-  if (daysUntilFriday === 0) {
-    daysUntilFriday = 7;
-  }
+const getNextFridayOnOrAfter = (referenceDate = new Date()) => {
+  return addDays(referenceDate, 7);
+};
 
-  const nextFriday = new Date(base);
-  nextFriday.setDate(nextFriday.getDate() + daysUntilFriday);
-  nextFriday.setHours(12, 0, 0, 0);
-  return nextFriday;
+const getFirstWeeklyDueDate = (referenceDate = new Date()) => {
+  return addDays(referenceDate, 7);
 };
 
 const resolveWeeklyFirstDueDate = ({
@@ -62,20 +67,19 @@ const resolveWeeklyFirstDueDate = ({
   fechaPrimerVencimiento = null
 } = {}) => {
   const baseDate = normalizeToNoon(fechaInicio) || normalizeToNoon(fechaAprobacion) || new Date();
-  const nextFriday = getNextFridayStrict(baseDate);
+  const firstDue = getFirstWeeklyDueDate(baseDate);
   const explicitCandidate =
     normalizeToNoon(fechaPrimerVencimiento) || normalizeToNoon(fechaPrimerPago);
 
   if (!explicitCandidate) {
-    return nextFriday;
+    return firstDue;
   }
 
-  if (explicitCandidate.getDay() !== FRIDAY_INDEX) {
-    return nextFriday;
-  }
+  const expectedFirstDue = formatDateOnly(firstDue);
+  const explicitDate = formatDateOnly(explicitCandidate);
 
-  if (explicitCandidate.getTime() < nextFriday.getTime()) {
-    return nextFriday;
+  if (explicitDate !== expectedFirstDue) {
+    return firstDue;
   }
 
   return explicitCandidate;
@@ -109,8 +113,11 @@ const buildWeeklyDueDates = ({
 module.exports = {
   buildWeeklyDueDates,
   formatDateOnly,
+  getFirstWeeklyDueDate,
   getNextFridayStrict,
+  getNextFridayOnOrAfter,
   normalizeToNoon,
+  addDays,
   parseFlexibleDate,
   resolveWeeklyFirstDueDate
 };

@@ -82,6 +82,10 @@ const Prestamo = sequelize.define('Prestamo', {
     type: DataTypes.DECIMAL(15, 2),
     defaultValue: 0
   },
+  abono_parcial_acumulado: {
+    type: DataTypes.DECIMAL(15, 2),
+    defaultValue: 0
+  },
   pagado: {
     type: DataTypes.DECIMAL(15, 2),
     defaultValue: 0

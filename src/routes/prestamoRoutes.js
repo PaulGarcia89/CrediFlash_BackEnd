@@ -17,11 +17,31 @@ const {
   round2
 } = require('../utils/weeklyPaymentApplication');
 const { buildClienteNombreCompleto } = require('../utils/clienteDisplay');
+const { getDocumentStorageState } = require('../utils/documentStorage');
+const { ensurePrestamoAbonoParcialColumns } = require('../utils/prestamoAbonos');
 
 const toMoneyNumber = (value) => {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return null;
   return Number(numeric.toFixed(2));
+};
+
+const buildFinancialSummaryFromBase = (prestamo = {}) => {
+  const montoSolicitado = toMoneyNumber(prestamo.monto_solicitado) || 0;
+  const interes = toMoneyNumber(prestamo.interes) || 0;
+  const numSemanas = Number(prestamo.num_semanas) || 0;
+  const pagado = toMoneyNumber(prestamo.pagado) || 0;
+
+  const totalPagar = round2(montoSolicitado + (montoSolicitado * interes / 100));
+  const pagosSemanales = numSemanas > 0 ? round2(totalPagar / numSemanas) : totalPagar;
+  const pendiente = Math.max(round2(totalPagar - pagado), 0);
+
+  return {
+    totalPagar,
+    pagosSemanales,
+    pendiente,
+    ganancias: round2(totalPagar - montoSolicitado)
+  };
 };
 
 const resolveSaldoPendiente = (prestamo = {}) => {
@@ -276,6 +296,20 @@ const construirUrlArchivoRelativo = (req, rutaRelativa = '') => {
   const baseUrl = `${req.protocol}://${req.get('host')}`;
   const rutaNormalizada = String(rutaRelativa).replace(/\\/g, '/').replace(/^\/+/, '');
   return `${baseUrl}/${rutaNormalizada}`;
+};
+
+const resolveContratoPrestamoAvailability = (rawPrestamo = {}, contratoDoc = null) => {
+  const contratoDocPath = contratoDoc?.ruta || null;
+  const prestamoContratoPath = rawPrestamo?.contrato || null;
+  const candidatePath = contratoDocPath || prestamoContratoPath;
+  const availability = getDocumentStorageState(candidatePath);
+  const rutaDisponible = availability.exists ? availability.relativePath : null;
+
+  return {
+    existe: Boolean(availability.exists),
+    storage_path: rutaDisponible,
+    storage_key: rutaDisponible
+  };
 };
 
 let solicitudDocumentoSchemaChecked = false;
@@ -546,6 +580,13 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
       const cuotasRestantes = resolveCuotasRestantes(raw);
       const saldoPendiente = resolveSaldoPendiente(raw);
       const nombreCompletoCliente = buildClienteNombreCompleto(raw?.solicitud?.cliente || {});
+      const contratoAvailability = resolveContratoPrestamoAvailability(raw, contratoDoc);
+      const contratoUrl = contratoAvailability.existe
+        ? (contratoDoc
+            ? construirUrlDocumento(req, contratoDoc.id, 'inline')
+            : construirUrlArchivoRelativo(req, contratoAvailability.storage_path || raw?.contrato))
+        : null;
+      const financialSummary = buildFinancialSummaryFromBase(raw);
 
       return {
         ...raw,
@@ -553,16 +594,28 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
         nombre_completo: nombreCompletoCliente || raw.nombre_completo || null,
         nombre_completo_registro: raw.nombre_completo || null,
         cliente_nombre: nombreCompletoCliente || raw.nombre_completo || null,
-        saldo_pendiente: saldoPendiente,
-        monto_pendiente: saldoPendiente,
+        total_pagar_registro: raw.total_pagar || null,
+        pagos_semanales_registro: raw.pagos_semanales || null,
+        pendiente_registro: raw.pendiente || null,
+        ganancias_registro: raw.ganancias || null,
+        total_pagar_bruto: financialSummary.totalPagar,
+        pagos_semanales_bruto: financialSummary.pagosSemanales,
+        ganancias_bruto: financialSummary.ganancias,
+        total_pagar: raw.total_pagar,
+        pagos_semanales: raw.pagos_semanales,
+        ganancias: raw.ganancias,
+        pendiente: raw.pendiente,
+        saldo_pendiente: raw.pendiente,
+        monto_pendiente: raw.pendiente,
         cuotas_restantes: cuotasRestantes,
         pagos_pendientes: cuotasRestantes,
+        abono_parcial_acumulado: raw.abono_parcial_acumulado || 0,
+        contrato_disponible: contratoAvailability.existe,
+        contrato_storage_path: contratoAvailability.storage_path,
+        contrato_credito_id: contratoAvailability.existe ? (contratoDoc?.id || null) : null,
         status_normalizado: normalizeOperationalStatus(raw),
         es_activo_operativo: normalizeOperationalStatus(raw) !== 'PAGADO',
-        contrato_credito_id: contratoDoc?.id || null,
-        contrato_url: contratoDoc
-          ? construirUrlDocumento(req, contratoDoc.id, 'inline')
-          : construirUrlArchivoRelativo(req, raw?.contrato)
+        contrato_url: contratoUrl
       };
     });
 
@@ -577,10 +630,16 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
         interes: item.interes,
         num_semanas: item.num_semanas,
         total_pagar: item.total_pagar,
+        total_pagar_bruto: item.total_pagar_bruto,
+        total_pagar_registro: item.total_pagar_registro,
         pagos_semanales: item.pagos_semanales,
+        pagos_semanales_bruto: item.pagos_semanales_bruto,
+        pagos_semanales_registro: item.pagos_semanales_registro,
         pagos_hechos: item.pagos_hechos,
         pagos_pendientes: item.pagos_pendientes,
+        abono_parcial_acumulado: item.abono_parcial_acumulado,
         pendiente: item.pendiente,
+        pendiente_registro: item.pendiente_registro,
         saldo_pendiente: item.saldo_pendiente,
         monto_pendiente: item.monto_pendiente,
         status: item.status,
@@ -600,10 +659,16 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
           { key: 'interes', label: 'interes' },
           { key: 'num_semanas', label: 'num_semanas' },
           { key: 'total_pagar', label: 'total_pagar' },
+          { key: 'total_pagar_bruto', label: 'total_pagar_bruto' },
+          { key: 'total_pagar_registro', label: 'total_pagar_registro' },
           { key: 'pagos_semanales', label: 'pagos_semanales' },
+          { key: 'pagos_semanales_bruto', label: 'pagos_semanales_bruto' },
+          { key: 'pagos_semanales_registro', label: 'pagos_semanales_registro' },
           { key: 'pagos_hechos', label: 'pagos_hechos' },
           { key: 'pagos_pendientes', label: 'pagos_pendientes' },
+          { key: 'abono_parcial_acumulado', label: 'abono_parcial_acumulado' },
           { key: 'pendiente', label: 'pendiente' },
+          { key: 'pendiente_registro', label: 'pendiente_registro' },
           { key: 'saldo_pendiente', label: 'saldo_pendiente' },
           { key: 'monto_pendiente', label: 'monto_pendiente' },
           { key: 'status', label: 'status' },
@@ -843,6 +908,8 @@ router.post(
       const montoReferidoCliente = parseFloat(cliente.monto_referido || 0);
       const descuentosDisponibles = parseInt(cliente.descuentos_referido_disponibles, 10) || 0;
       if (montoReferidoCliente > 0 && descuentosDisponibles > 0) {
+        descuentoReferidoAplicado = parseFloat(Math.min(montoReferidoCliente, totalPagar).toFixed(2));
+
         const ultimaCuota = await Cuota.findOne({
           where: { prestamo_id: prestamo.id },
           order: [['fecha_vencimiento', 'DESC']],
@@ -850,32 +917,35 @@ router.post(
         });
 
         if (ultimaCuota) {
-          const montoUltimaCuota = parseFloat(ultimaCuota.monto_total || 0);
-          descuentoReferidoAplicado = parseFloat(Math.min(montoReferidoCliente, montoUltimaCuota).toFixed(2));
+          const montoUltimaCuota = round2(ultimaCuota.monto_total || 0);
+          const nuevoMontoUltimaCuota = round2(Math.max(montoUltimaCuota - descuentoReferidoAplicado, 0));
+          const interesUltimaCuota = round2(ultimaCuota.monto_interes || 0);
+          const interesReducido = Math.min(interesUltimaCuota, descuentoReferidoAplicado);
+          const capitalReducido = round2(descuentoReferidoAplicado - interesReducido);
 
-          if (descuentoReferidoAplicado > 0) {
-            ultimaCuota.monto_total = parseFloat((montoUltimaCuota - descuentoReferidoAplicado).toFixed(2));
-            ultimaCuota.observaciones = ultimaCuota.observaciones
-              ? `${ultimaCuota.observaciones}\nDescuento referido aplicado: -${descuentoReferidoAplicado.toFixed(2)} USD`
-              : `Descuento referido aplicado: -${descuentoReferidoAplicado.toFixed(2)} USD`;
-            await ultimaCuota.save({ transaction });
-
-            await prestamo.update({
-              total_pagar: parseFloat((parseFloat(prestamo.total_pagar || 0) - descuentoReferidoAplicado).toFixed(2)),
-              ganancias: parseFloat((parseFloat(prestamo.ganancias || 0) - descuentoReferidoAplicado).toFixed(2)),
-              pendiente: parseFloat((parseFloat(prestamo.pendiente || 0) - descuentoReferidoAplicado).toFixed(2)),
-              pagos_semanales: semanas > 0
-                ? round2((parseFloat(prestamo.total_pagar || 0) - descuentoReferidoAplicado) / semanas)
-                : parseFloat((parseFloat(prestamo.total_pagar || 0) - descuentoReferidoAplicado).toFixed(2))
-            }, { transaction });
-
-            await cliente.update({
-              descuentos_referido_disponibles: Math.max(descuentosDisponibles - 1, 0),
-              descuentos_referido_aplicados: (parseInt(cliente.descuentos_referido_aplicados, 10) || 0) + 1
-            }, { transaction });
-          }
+          ultimaCuota.monto_interes = round2(Math.max(interesUltimaCuota - interesReducido, 0));
+          ultimaCuota.monto_capital = round2(Math.max(round2(ultimaCuota.monto_capital || 0) - capitalReducido, 0));
+          ultimaCuota.monto_total = round2(ultimaCuota.monto_capital + ultimaCuota.monto_interes);
+          ultimaCuota.observaciones = ultimaCuota.observaciones
+            ? `${ultimaCuota.observaciones}\nDescuento referido aplicado: -${descuentoReferidoAplicado.toFixed(2)} USD`
+            : `Descuento referido aplicado: -${descuentoReferidoAplicado.toFixed(2)} USD`;
+          await ultimaCuota.save({ transaction });
         }
+
+        await cliente.update({
+          descuentos_referido_disponibles: Math.max(descuentosDisponibles - 1, 0),
+          descuentos_referido_aplicados: (parseInt(cliente.descuentos_referido_aplicados, 10) || 0) + 1
+        }, { transaction });
       }
+
+      const totalPagarNeto = round2(totalPagar - descuentoReferidoAplicado);
+      const gananciasNetas = round2(ganancias - descuentoReferidoAplicado);
+
+      await prestamo.update({
+        total_pagar: totalPagarNeto,
+        ganancias: gananciasNetas,
+        pendiente: totalPagarNeto
+      }, { transaction });
 
       const contrato = await SolicitudDocumento.create({
         solicitud_id: solicitud.id,
@@ -888,6 +958,8 @@ router.post(
         ruta: path.relative(path.join(__dirname, '..', '..'), contratoArchivo.path)
       }, { transaction });
 
+      const contratoAvailability = getDocumentStorageState(contrato.ruta || prestamo.contrato);
+
       return {
         status: 201,
         body: {
@@ -897,13 +969,17 @@ router.post(
             prestamo,
             cuotas_generadas: cuotasGeneradas,
             descuento_referido_aplicado: descuentoReferidoAplicado,
+            total_pagar_bruto: totalPagar,
+            total_pagar_neto: totalPagarNeto,
+            pagos_semanales_bruto: pagosSemanales,
             contrato_credito_id: contrato.id,
             contrato: {
               id: contrato.id,
               nombre: contrato.nombre_original,
               tipo: 'CONTRATO_CREDITO',
-              storage_path: prestamo.contrato,
-              url: construirUrlArchivoRelativo(req, prestamo.contrato),
+              storage_path: contratoAvailability.exists ? contratoAvailability.relativePath : null,
+              contrato_disponible: contratoAvailability.exists,
+              url: contratoAvailability.exists ? construirUrlArchivoRelativo(req, contratoAvailability.relativePath) : null,
               url_descarga: construirUrlDocumento(req, contrato.id, 'attachment')
             }
           }
@@ -1022,6 +1098,7 @@ router.post('/:id/pago-semanal', authenticateToken, requirePermission('prestamos
 
     const resultado = await sequelize.transaction(async (transaction) => {
       await ensureCuotaFeeColumns();
+      await ensurePrestamoAbonoParcialColumns(sequelize);
       const prestamo = await Prestamo.findByPk(id, {
         include: [
           {
@@ -1160,6 +1237,7 @@ router.post('/:id/pago-semanal', authenticateToken, requirePermission('prestamos
       await prestamo.update({
         pagos_hechos: pagosHechos,
         pagos_pendientes: pagosPendientes,
+        abono_parcial_acumulado: resultadoAplicacion.abonoParcialAcumulado,
         pagado: pagadoTotal,
         pendiente: pendienteTotal,
         status: estadoPrestamo,
@@ -1199,6 +1277,7 @@ router.post('/:id/pago-semanal', authenticateToken, requirePermission('prestamos
             saldo_pendiente: pendienteTotal,
             monto_pendiente: pendienteTotal,
             cuotas_restantes: pagosPendientes,
+            abono_parcial_acumulado: resultadoAplicacion.abonoParcialAcumulado,
             cuota_actual_id: cuota.id,
             estado_cuota_actual: cuotasPorId.get(cuota.id)?.estado || cuota.estado,
             cuotas_ajustadas: cuotasAjustadas,
@@ -1210,6 +1289,7 @@ router.post('/:id/pago-semanal', authenticateToken, requirePermission('prestamos
             cliente: clienteNombre,
             pagos_hechos: pagosHechos,
             pagos_pendientes: pagosPendientes,
+            abono_parcial_acumulado: resultadoAplicacion.abonoParcialAcumulado,
             pagado: pagadoTotal,
             pendiente: pendienteTotal,
             status: estadoPrestamo,

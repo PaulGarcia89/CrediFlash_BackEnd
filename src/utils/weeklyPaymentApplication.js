@@ -114,6 +114,8 @@ const applyWeeklyPaymentToQuotas = ({
   const cuotasPendientes = cuotasActualizadas.filter((cuota) => round2(cuota.monto_total - cuota.monto_pagado) > 0).length;
   const pagosHechos = cuotasActualizadas.length - cuotasPendientes;
   const prestamoPagado = cuotasPendientes === 0 && pendienteTotal <= 0;
+  const cuotaPendiente = cuotasActualizadas.find((cuota) => round2(cuota.monto_total - cuota.monto_pagado) > 0) || null;
+  const abonoParcialAcumulado = cuotaPendiente ? round2(cuotaPendiente.monto_pagado) : 0;
   const tipoAplicacion = excedenteOriginal > 0
     ? 'ADELANTADO'
     : (aplicadoActual >= saldoActual ? 'COMPLETO' : 'PARCIAL');
@@ -128,6 +130,7 @@ const applyWeeklyPaymentToQuotas = ({
     cuotasRestantes: cuotasPendientes,
     pagosHechos,
     prestamoPagado,
+    abonoParcialAcumulado,
     faltante: tipoAplicacion === 'PARCIAL' ? round2(saldoActual - aplicadoActual) : 0,
     excedente: excedenteOriginal,
     excedente_remanente: excedente,

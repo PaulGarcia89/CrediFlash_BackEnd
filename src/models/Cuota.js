@@ -107,7 +107,8 @@ const Cuota = sequelize.define('Cuota', {
 // Método para marcar cuota como pagada
 Cuota.prototype.marcarComoPagada = async function(montoPagado, observaciones = null) {
   try {
-    this.monto_pagado = parseFloat(montoPagado);
+    const pagoAcumulado = parseFloat(this.monto_pagado || 0) + parseFloat(montoPagado);
+    this.monto_pagado = parseFloat(pagoAcumulado.toFixed(2));
     this.fecha_pago = new Date();
     
     // Actualizar observaciones

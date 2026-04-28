@@ -3,6 +3,10 @@ const { Cuota, Prestamo, Solicitud, Cliente } = require('../models');
 const { Op } = require('sequelize');
 const { sendCsv } = require('../utils/exporter');
 const { sendCuotaReminderEmail } = require('../utils/emailNotificationService');
+const {
+  ensurePrestamoAbonoParcialColumns,
+  resolveAbonoParcialAcumulado
+} = require('../utils/prestamoAbonos');
 
 const mergeObservacion = (prev, extra) => {
   if (!extra) return prev || null;
@@ -284,6 +288,8 @@ const cuotaController = {
           message: 'La cuota ya está completamente pagada'
         });
       }
+
+      await ensurePrestamoAbonoParcialColumns(Prestamo.sequelize);
       
       // Registrar el pago
       const resultado = await cuota.marcarComoPagada(monto_pagado, observaciones);
@@ -313,6 +319,7 @@ const cuotaController = {
         const pendienteTotal = parseFloat(resumen.pendienteTotal.toFixed(2));
         const cuotasRestantes = resumen.cuotasConSaldo;
         const pagosHechos = cuotasPrestamo.length - cuotasRestantes;
+        const abonoParcialAcumulado = resolveAbonoParcialAcumulado(cuotasPrestamo);
         const status = pendienteTotal <= 0 ? 'PAGADO' : 'EN_MARCHA';
 
         await prestamo.update({
@@ -320,6 +327,7 @@ const cuotaController = {
           pendiente: pendienteTotal,
           pagos_hechos: pagosHechos,
           pagos_pendientes: cuotasRestantes,
+          abono_parcial_acumulado: abonoParcialAcumulado,
           status,
           estado: status
         });
@@ -331,6 +339,7 @@ const cuotaController = {
           cuotas_restantes: cuotasRestantes,
           pagos_hechos: pagosHechos,
           pagos_pendientes: cuotasRestantes,
+          abono_parcial_acumulado: abonoParcialAcumulado,
           pagado: pagadoTotal,
           pendiente: pendienteTotal,
           status
@@ -346,7 +355,8 @@ const cuotaController = {
           monto_pendiente: resultado?.prestamo?.monto_pendiente ?? resultado?.datos?.saldo_pendiente ?? null,
           cuotas_restantes: resultado?.prestamo?.cuotas_restantes ?? null,
           pagos_hechos: resultado?.prestamo?.pagos_hechos ?? null,
-          pagos_pendientes: resultado?.prestamo?.pagos_pendientes ?? null
+          pagos_pendientes: resultado?.prestamo?.pagos_pendientes ?? null,
+          abono_parcial_acumulado: resultado?.prestamo?.abono_parcial_acumulado ?? null
         }
       });
     } catch (error) {
