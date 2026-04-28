@@ -864,6 +864,9 @@ router.post(
               total_pagar: parseFloat((parseFloat(prestamo.total_pagar || 0) - descuentoReferidoAplicado).toFixed(2)),
               ganancias: parseFloat((parseFloat(prestamo.ganancias || 0) - descuentoReferidoAplicado).toFixed(2)),
               pendiente: parseFloat((parseFloat(prestamo.pendiente || 0) - descuentoReferidoAplicado).toFixed(2)),
+              pagos_semanales: semanas > 0
+                ? round2((parseFloat(prestamo.total_pagar || 0) - descuentoReferidoAplicado) / semanas)
+                : parseFloat((parseFloat(prestamo.total_pagar || 0) - descuentoReferidoAplicado).toFixed(2))
             }, { transaction });
 
             await cliente.update({
