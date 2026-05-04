@@ -127,3 +127,21 @@ test('pago parcial con cargos mantiene el saldo pendiente correcto', () => {
   assert.equal(result.cuotasActualizadas[0].monto_pagado, 300);
   assert.equal(result.abonoParcialAcumulado, 300);
 });
+
+test('pago parcial con penalizacion sigue siendo valido y acumula cargos en la cuota', () => {
+  const result = applyWeeklyPaymentToQuotas({
+    cuotas: buildQuotas([147.5, 147.5, 147.5]),
+    montoPagoRecibido: 50,
+    montoPenalizacion: 10,
+    montoFee: 0
+  });
+
+  assert.equal(result.tipoAplicacion, 'PARCIAL');
+  assert.equal(result.pagadoTotal, 50);
+  assert.equal(result.saldoPendienteTotal, 402.5);
+  assert.equal(result.cuotasRestantes, 3);
+  assert.equal(result.cuotasActualizadas[0].monto_total, 157.5);
+  assert.equal(result.cuotasActualizadas[0].monto_pagado, 50);
+  assert.equal(result.cuotasActualizadas[0].monto_penalizacion_acumulada, 10);
+  assert.equal(result.abonoParcialAcumulado, 50);
+});

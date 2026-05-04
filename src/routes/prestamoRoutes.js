@@ -1130,16 +1130,6 @@ router.post('/:id/pago-semanal', authenticateToken, requirePermission('prestamos
         return buildError(400, 'El monto ingresado no coincide con las reglas de pago configuradas.', 'INVALID_FEE_AMOUNT');
       }
 
-      const hoy = new Date();
-      hoy.setHours(0, 0, 0, 0);
-      const fechaVencimientoCuota = new Date(cuota.fecha_vencimiento);
-      fechaVencimientoCuota.setHours(0, 0, 0, 0);
-      const cuotaVencida = fechaVencimientoCuota < hoy;
-
-      if (!cuotaVencida && montoPenalizacion > 0) {
-        return buildError(400, 'El monto ingresado no coincide con las reglas de pago configuradas.', 'INVALID_PENALTY_AMOUNT');
-      }
-
       const cuotaBaseOriginal = parseFloat(cuota.monto_total) || 0;
       const ahora = new Date();
       const resultadoAplicacion = applyWeeklyPaymentToQuotas({
