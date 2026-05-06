@@ -149,27 +149,59 @@ const calculateMora = (cuota, today) => {
   return null;
 };
 
-const getBaseCuotaIncludes = () => ([
-  {
-    model: Prestamo,
-    as: 'prestamo',
-    attributes: ['id', 'monto_solicitado', 'total_pagar', 'pendiente', 'pagos_semanales', 'status'],
-    include: [
-      {
-        model: Solicitud,
-        as: 'solicitud',
-        attributes: ['id', 'cliente_id'],
-        include: [
-          {
-            model: Cliente,
-            as: 'cliente',
-            attributes: ['id', 'nombre', 'apellido', 'email']
-          }
-        ]
-      }
-    ]
+const normalizeReportFilterValue = (value) => {
+  const normalized = String(value || '').trim().toUpperCase();
+  if (!normalized || normalized === 'TODOS' || normalized === 'TODAS') return '';
+  return normalized;
+};
+
+const buildPrestamoReportWhere = (filtros = {}) => {
+  const where = {};
+  const estado = normalizeReportFilterValue(filtros.estado);
+  const modalidad = normalizeReportFilterValue(filtros.modalidad);
+
+  if (estado) {
+    if (estado === 'EN_PROCESO' || estado === 'EN_MARCHA') {
+      where.status = { [Op.in]: ['ACTIVO', 'EN_PROCESO', 'EN_MARCHA'] };
+    } else {
+      where.status = estado;
+    }
   }
-]);
+
+  if (modalidad) {
+    where.modalidad = modalidad;
+  }
+
+  return where;
+};
+
+const getBaseCuotaIncludes = (filtros = {}) => {
+  const prestamoWhere = buildPrestamoReportWhere(filtros);
+  const hasPrestamoFilters = Object.keys(prestamoWhere).length > 0;
+
+  return [
+    {
+      model: Prestamo,
+      as: 'prestamo',
+      attributes: ['id', 'monto_solicitado', 'total_pagar', 'pendiente', 'pagos_semanales', 'status', 'modalidad'],
+      ...(hasPrestamoFilters ? { where: prestamoWhere, required: true } : {}),
+      include: [
+        {
+          model: Solicitud,
+          as: 'solicitud',
+          attributes: ['id', 'cliente_id'],
+          include: [
+            {
+              model: Cliente,
+              as: 'cliente',
+              attributes: ['id', 'nombre', 'apellido', 'email']
+            }
+          ]
+        }
+      ]
+    }
+  ];
+};
 
 const ensureReportTables = async () => {
   await sequelize.query(`
@@ -488,28 +520,34 @@ const generarMorasHistorialPagos = async ({ startYmd, endYmd }) => {
   };
 };
 
-const generarTopMorasDiarias = async ({ top }) => {
-  const today = new Date();
-  const todayYmd = toYmdString(today);
+const generarTopMorasDiarias = async ({ top, startYmd = null, endYmd = null, filtros = {} }) => {
+  const snapshotDate = endYmd
+    ? (parseDateStrict(endYmd) || new Date(`${endYmd}T00:00:00`))
+    : new Date();
+  const snapshotYmd = toYmdString(snapshotDate);
+  const fechaVencimientoFilter = startYmd && endYmd
+    ? { [Op.between]: [startYmd, endYmd] }
+    : { [Op.lte]: snapshotYmd };
+
   const cuotas = await Cuota.findAll({
     where: {
-      fecha_vencimiento: { [Op.lte]: todayYmd },
-      estado: { [Op.in]: ['PENDIENTE', 'EN_MORA', 'PARCIAL'] }
+      fecha_vencimiento: fechaVencimientoFilter,
+      estado: { [Op.notIn]: ['PAGADO', 'CANCELADO'] }
     },
-    include: getBaseCuotaIncludes(),
+    include: getBaseCuotaIncludes(filtros),
     attributes: ['id', 'prestamo_id', 'fecha_vencimiento', 'monto_total', 'monto_pagado']
   });
 
   const grouped = new Map();
   cuotas.forEach((cuota) => {
-    const mora = calculateMora(cuota, today);
+    const mora = calculateMora(cuota, snapshotDate);
     if (!mora) return;
     const cliente = cuota?.prestamo?.solicitud?.cliente;
     const key = cliente?.id || 'N/A';
 
     if (!grouped.has(key)) {
       grouped.set(key, {
-        fecha_reporte: formatMMDDYYYY(today),
+        fecha_reporte: formatMMDDYYYY(snapshotDate),
         cliente_id: key,
         nombre_completo: cliente ? `${cliente.nombre || ''} ${cliente.apellido || ''}`.trim() : 'Cliente no identificado',
         cantidad_cuotas_en_mora: 0,
@@ -540,7 +578,7 @@ const generarTopMorasDiarias = async ({ top }) => {
     ],
     rows,
     resumen: {
-      fecha_reporte: formatMMDDYYYY(today),
+      fecha_reporte: formatMMDDYYYY(snapshotDate),
       clientes_en_mora_hoy: rows.length,
       cuotas_en_mora_hoy: rows.reduce((acc, row) => acc + row.cantidad_cuotas_en_mora, 0),
       monto_total_en_mora_hoy: round2(rows.reduce((acc, row) => acc + row.monto_mora_hoy, 0))
@@ -798,7 +836,7 @@ const generarReporteData = async ({ tipo, filtros }) => {
   if (tipo === 'ganancias-esperadas-cobradas') return generarGananciasEsperadasCobradas({ ...range });
   if (tipo === 'saldo-pendiente-cliente') return generarSaldoPendienteCliente({ ...range, filtros });
   if (tipo === 'moras-historial-pagos') return generarMorasHistorialPagos({ ...range, filtros });
-  if (tipo === 'top-moras-diarias') return generarTopMorasDiarias({ top });
+  if (tipo === 'top-moras-diarias') return generarTopMorasDiarias({ top, ...range, filtros });
   if (tipo === 'productividad-analistas') return generarProductividadAnalistas({ ...range, filtros });
   if (tipo === 'notificaciones-envios') return generarNotificacionesEnvios({ ...range, filtros });
   if (tipo === 'referidos-impacto') return generarReferidosImpacto({ ...range, filtros });
