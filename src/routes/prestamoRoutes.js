@@ -453,22 +453,23 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
 
     if (search && String(search).trim() !== '') {
       const term = String(search).trim().replace(/\s+/g, ' ').toUpperCase();
-      const searchCondition = {
-        [Op.or]: [
-          sequelize.where(
-            sequelize.fn(
-              'regexp_replace',
-              sequelize.fn('upper', sequelize.col('Prestamo.nombre_completo')),
-              '\\s+',
-              ' ',
-              'g'
-            ),
-            { [Op.like]: `%${term}%` }
-          ),
-          { '$solicitud.cliente.nombre$': { [Op.iLike]: `%${term}%` } },
-          { '$solicitud.cliente.apellido$': { [Op.iLike]: `%${term}%` } }
-        ]
-      };
+      const termSql = term.replace(/'/g, "''");
+
+      const searchCondition = sequelize.literal(`
+        (
+          regexp_replace(upper("Prestamo"."nombre_completo"), '\\s+', ' ', 'g') LIKE '%${termSql}%'
+          OR EXISTS (
+            SELECT 1
+            FROM solicitudes s
+            INNER JOIN clientes c ON c.id = s.cliente_id
+            WHERE s.id = "Prestamo"."solicitud_id"
+              AND (
+                upper(c.nombre) LIKE '%${termSql}%'
+                OR upper(c.apellido) LIKE '%${termSql}%'
+              )
+          )
+        )
+      `);
 
       const andConditions = Array.isArray(where[Op.and]) ? where[Op.and] : [];
       where[Op.and] = [...andConditions, searchCondition];
@@ -501,7 +502,8 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
     const queryOptions = {
       where,
       include,
-      order: [['fecha_inicio', 'DESC']]
+      order: [['fecha_inicio', 'DESC']],
+      subQuery: false
     };
 
     if (format !== 'csv') {
