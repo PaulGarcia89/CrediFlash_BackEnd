@@ -18,6 +18,9 @@ const {
   resolveNumeroCuotas
 } = require('../services/financial/loanPricingService');
 const {
+  ensurePrestamoFinancialColumns
+} = require('../utils/prestamoFinancialColumns');
+const {
   ensureSolicitudFinancialColumns
 } = require('../utils/solicitudFinancialColumns');
 const {
@@ -421,6 +424,7 @@ router.use(async (_req, res, next) => {
 // GET /api/prestamos - Obtener todos los préstamos (paginado y filtrado)
 router.get('/', authenticateToken, requirePermission('prestamos.view'), async (req, res) => {
   try {
+    await ensurePrestamoFinancialColumns(sequelize);
     await ensureSolicitudDocumentoSchema();
     await ensurePrestamoContratoColumn();
     await ensurePrestamoReminderModeColumns();
@@ -705,6 +709,7 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
 // POST /api/prestamos - Crear préstamo manualmente
 router.post('/', authenticateToken, requirePermission('prestamos.create'), async (req, res) => {
   try {
+    await ensurePrestamoFinancialColumns(sequelize);
     const { 
       solicitud_id, 
       monto_solicitado, 
