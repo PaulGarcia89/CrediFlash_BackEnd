@@ -21,6 +21,9 @@ const {
   ensurePrestamoFinancialColumns
 } = require('../utils/prestamoFinancialColumns');
 const {
+  ensureCuotaFinancialColumns
+} = require('../utils/cuotaFinancialColumns');
+const {
   ensureSolicitudFinancialColumns
 } = require('../utils/solicitudFinancialColumns');
 const {
@@ -710,6 +713,7 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
 router.post('/', authenticateToken, requirePermission('prestamos.create'), async (req, res) => {
   try {
     await ensurePrestamoFinancialColumns(sequelize);
+    await ensureCuotaFinancialColumns(sequelize);
     const { 
       solicitud_id, 
       monto_solicitado, 
@@ -835,6 +839,8 @@ router.post(
     }
 
     await ensureSolicitudFinancialColumns(sequelize);
+    await ensurePrestamoFinancialColumns(sequelize);
+    await ensureCuotaFinancialColumns(sequelize);
     await ensureSolicitudDocumentoSchema();
     await ensurePrestamoContratoColumn();
     await ensureClienteReferidosColumns();

@@ -19,6 +19,7 @@ const AnalistaRole = require('./AnalistaRole');
 const { ensureSolicitudOrigenColumns } = require('../utils/solicitudOrigen');
 const { ensureSolicitudFinancialColumns } = require('../utils/solicitudFinancialColumns');
 const { ensurePrestamoFinancialColumns } = require('../utils/prestamoFinancialColumns');
+const { ensureCuotaFinancialColumns } = require('../utils/cuotaFinancialColumns');
 const { ensurePrestamoAbonoParcialColumns } = require('../utils/prestamoAbonos');
 
 // ========== DEFINIR RELACIONES ==========
@@ -255,6 +256,8 @@ models.inicializarBaseDeDatos = async (opciones = {}) => {
     console.log('✅ Columnas financieras de solicitudes verificadas');
     await ensurePrestamoFinancialColumns(sequelize);
     console.log('✅ Columnas financieras de préstamos verificadas');
+    await ensureCuotaFinancialColumns(sequelize);
+    console.log('✅ Columnas financieras de cuotas verificadas');
     await ensurePrestamoAbonoParcialColumns(sequelize);
     console.log('✅ Columna de abono parcial de préstamos verificada');
     
