@@ -1,5 +1,9 @@
 const { Op, Sequelize } = require('sequelize');
 const { buildInternalSolicitudOrigin } = require('../utils/solicitudOrigen');
+const {
+  calculateFlatLoanPricing,
+  resolveInterestPercentageInput
+} = require('../services/financial/loanPricingService');
 
 class SolicitudController {
   constructor(models) {
@@ -15,7 +19,7 @@ class SolicitudController {
     try {
       console.log('📝 Recibiendo solicitud:', req.body);
       
-      const { cliente_id, monto_solicitado, plazo_semanas, tasa_variable, modelo_aprobacion_id, modelo_calificacion, destino } = req.body;
+      const { cliente_id, monto_solicitado, plazo_semanas, tasa_variable, tasa_base, interes_porcentaje, modelo_aprobacion_id, modelo_calificacion, destino } = req.body;
       
       // Validaciones básicas
       if (!cliente_id) {
@@ -49,11 +53,31 @@ class SolicitudController {
       }
       
       // Crear solicitud
+      const interesVisible = resolveInterestPercentageInput({
+        interesPorcentaje: interes_porcentaje,
+        tasaVariable: tasa_variable,
+        tasaBase: tasa_base
+      });
+      const financialPreview = calculateFlatLoanPricing({
+        montoOriginal: parseFloat(monto_solicitado),
+        interesPorcentaje: interesVisible,
+        modalidad: 'SEMANAL',
+        numeroCuotas: parseInt(plazo_semanas, 10),
+        fechaInicio: new Date()
+      });
+
       const solicitudData = {
         cliente_id,
         monto_solicitado: parseFloat(monto_solicitado),
         plazo_semanas: parseInt(plazo_semanas),
-        tasa_variable: tasa_variable ? parseFloat(tasa_variable) : 0.12,
+        modalidad: 'SEMANAL',
+        interes_porcentaje: financialPreview.interes_porcentaje,
+        tasa_base: financialPreview.interes_porcentaje,
+        tasa_variable: financialPreview.interes_porcentaje,
+        interes_total: financialPreview.interes_total,
+        numero_cuotas: financialPreview.numero_cuotas,
+        valor_cuota: financialPreview.valor_cuota,
+        fecha_fin: financialPreview.fecha_fin,
         modelo_aprobacion_id: modelo_aprobacion_id || null,
         modelo_calificacion: modelo_calificacion ? String(modelo_calificacion).trim().toUpperCase() : null,
         ...buildInternalSolicitudOrigin(req.body || {}),
@@ -72,7 +96,18 @@ class SolicitudController {
           cliente_id: solicitud.cliente_id,
           monto_solicitado: solicitud.monto_solicitado,
           plazo_semanas: solicitud.plazo_semanas,
-          tasa_variable: solicitud.tasa_variable,
+          interes_porcentaje: resolveInterestPercentageInput({
+            interesPorcentaje: solicitud.interes_porcentaje ?? solicitud.tasa_variable ?? solicitud.tasa_base
+          }),
+          interes_total: solicitud.interes_total,
+          numero_cuotas: solicitud.numero_cuotas,
+          valor_cuota: solicitud.valor_cuota,
+          tasa_base: resolveInterestPercentageInput({
+            interesPorcentaje: solicitud.tasa_base ?? solicitud.tasa_variable ?? solicitud.interes_porcentaje
+          }),
+          tasa_variable: resolveInterestPercentageInput({
+            interesPorcentaje: solicitud.tasa_variable ?? solicitud.tasa_base ?? solicitud.interes_porcentaje
+          }),
           modelo_aprobacion_id: solicitud.modelo_aprobacion_id,
           modelo_calificacion: solicitud.modelo_calificacion,
           origen: solicitud.origen,
@@ -139,9 +174,28 @@ class SolicitudController {
         offset: parseInt(offset)
       });
 
+      const solicitudesNormalizadas = rows.map((item) => {
+        const raw = item.toJSON ? item.toJSON() : item;
+        return {
+        ...raw,
+          interes_porcentaje: resolveInterestPercentageInput({
+            interesPorcentaje: raw.interes_porcentaje ?? raw.tasa_variable ?? raw.tasa_base
+          }),
+          interes_total: raw.interes_total,
+          numero_cuotas: raw.numero_cuotas,
+          valor_cuota: raw.valor_cuota,
+          tasa_base: resolveInterestPercentageInput({
+            interesPorcentaje: raw.tasa_base ?? raw.tasa_variable ?? raw.interes_porcentaje
+          }),
+          tasa_variable: resolveInterestPercentageInput({
+            interesPorcentaje: raw.tasa_variable ?? raw.tasa_base ?? raw.interes_porcentaje
+          })
+        };
+      });
+
       res.json({
         success: true,
-        data: rows,
+        data: solicitudesNormalizadas,
         pagination: {
           total: count,
           page: parseInt(page),
@@ -193,9 +247,25 @@ class SolicitudController {
         });
       }
 
+      const solicitudRaw = solicitud.toJSON ? solicitud.toJSON() : solicitud;
+
       res.json({
         success: true,
-        data: solicitud
+        data: {
+          ...solicitudRaw,
+          interes_porcentaje: resolveInterestPercentageInput({
+            interesPorcentaje: solicitudRaw.interes_porcentaje ?? solicitudRaw.tasa_variable ?? solicitudRaw.tasa_base
+          }),
+          interes_total: solicitudRaw.interes_total,
+          numero_cuotas: solicitudRaw.numero_cuotas,
+          valor_cuota: solicitudRaw.valor_cuota,
+          tasa_base: resolveInterestPercentageInput({
+            interesPorcentaje: solicitudRaw.tasa_base ?? solicitudRaw.tasa_variable ?? solicitudRaw.interes_porcentaje
+          }),
+          tasa_variable: resolveInterestPercentageInput({
+            interesPorcentaje: solicitudRaw.tasa_variable ?? solicitudRaw.tasa_base ?? solicitudRaw.interes_porcentaje
+          })
+        }
       });
 
     } catch (error) {
@@ -316,7 +386,16 @@ class SolicitudController {
       const updates = {};
       if (monto_solicitado !== undefined) updates.monto_solicitado = parseFloat(monto_solicitado);
       if (plazo_semanas !== undefined) updates.plazo_semanas = parseInt(plazo_semanas);
-      if (tasa_variable !== undefined) updates.tasa_variable = parseFloat(tasa_variable);
+      if (tasa_variable !== undefined) {
+        const tasaVariableVisible = resolveInterestPercentageInput({
+          interesPorcentaje: tasa_variable,
+          tasaVariable: tasa_variable,
+          tasaBase: tasa_variable
+        });
+        updates.tasa_variable = tasaVariableVisible;
+        updates.interes_porcentaje = tasaVariableVisible;
+        updates.tasa_base = tasaVariableVisible;
+      }
       if (modelo_aprobacion_id !== undefined) updates.modelo_aprobacion_id = modelo_aprobacion_id;
       if (modelo_calificacion !== undefined) updates.modelo_calificacion = modelo_calificacion;
       if (destino !== undefined) updates.destino = destino;

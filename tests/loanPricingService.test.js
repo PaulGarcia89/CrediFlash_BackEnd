@@ -2,7 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  calculateFlatLoanPricing
+  calculateFlatLoanPricing,
+  resolveInterestPercentageInput
 } = require('../src/services/financial/loanPricingService');
 const {
   formatDateOnly
@@ -65,4 +66,9 @@ test('calcula préstamo mensual con fechas cada 1 mes', () => {
     financial.cronograma.map((cuota) => formatDateOnly(cuota.fecha_vencimiento)),
     ['2026-06-06', '2026-07-06', '2026-08-06']
   );
+});
+
+test('normaliza tasas legacy fraccionarias a porcentaje visible', () => {
+  assert.equal(resolveInterestPercentageInput({ interesPorcentaje: 0.17 }), 17);
+  assert.equal(resolveInterestPercentageInput({ interesPorcentaje: 17 }), 17);
 });

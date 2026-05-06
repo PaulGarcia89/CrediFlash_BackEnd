@@ -2,6 +2,21 @@ const { buildInstallmentDates, normalizeToNoon, round2 } = require('./scheduleSe
 
 const normalizeModalidad = (modalidad = 'SEMANAL') => String(modalidad || 'SEMANAL').trim().toUpperCase();
 
+const resolveInterestPercentageInput = ({ interesPorcentaje, tasaVariable, tasaBase } = {}) => {
+  const rawCandidate = [interesPorcentaje, tasaVariable, tasaBase].find((value) => value !== undefined && value !== null && `${value}`.trim() !== '');
+  const numeric = Number(rawCandidate);
+
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    throw new Error('interes_porcentaje debe ser un número mayor o igual a 0');
+  }
+
+  if (numeric > 0 && numeric <= 1) {
+    return round2(numeric * 100);
+  }
+
+  return round2(numeric);
+};
+
 const resolveNumeroCuotas = ({ numeroCuotas, plazoSemanas, modalidad } = {}) => {
   const explicit = Number(numeroCuotas);
   if (Number.isFinite(explicit) && explicit > 0) {
@@ -32,7 +47,7 @@ const calculateFlatLoanPricing = ({
   fechaPrimerVencimiento = null
 } = {}) => {
   const monto = round2(montoOriginal);
-  const interes = Number(interesPorcentaje) || 0;
+  const interes = resolveInterestPercentageInput({ interesPorcentaje });
   const modalidadNormalizada = normalizeModalidad(modalidad);
   const cuotas = resolveNumeroCuotas({ numeroCuotas, plazoSemanas, modalidad: modalidadNormalizada });
 
@@ -115,5 +130,6 @@ const calculateFlatLoanPricing = ({
 module.exports = {
   calculateFlatLoanPricing,
   normalizeModalidad,
+  resolveInterestPercentageInput,
   resolveNumeroCuotas
 };

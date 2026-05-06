@@ -14,6 +14,7 @@ const {
 } = require('../utils/cuotaSchedule');
 const {
   calculateFlatLoanPricing,
+  resolveInterestPercentageInput,
   resolveNumeroCuotas
 } = require('../services/financial/loanPricingService');
 const {
@@ -35,7 +36,9 @@ const toMoneyNumber = (value) => {
 
 const buildFinancialSummaryFromBase = (prestamo = {}) => {
   const montoOriginal = toMoneyNumber(prestamo.monto_original ?? prestamo.monto_solicitado) || 0;
-  const interesPorcentaje = toMoneyNumber(prestamo.interes_porcentaje ?? prestamo.interes) || 0;
+  const interesPorcentaje = resolveInterestPercentageInput({
+    interesPorcentaje: prestamo.interes_porcentaje ?? prestamo.interes ?? 0
+  });
   const interesTotalCanonico = toMoneyNumber(prestamo.interes_total);
   const numeroCuotas = Number(prestamo.numero_cuotas || prestamo.num_semanas) || 0;
   const valorCuotaCanonico = toMoneyNumber(prestamo.valor_cuota);
@@ -578,6 +581,12 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
         nombre_completo: nombreCompletoCliente || raw.nombre_completo || null,
         nombre_completo_registro: raw.nombre_completo || null,
         cliente_nombre: nombreCompletoCliente || raw.nombre_completo || null,
+        interes_porcentaje: resolveInterestPercentageInput({
+          interesPorcentaje: raw.interes_porcentaje ?? raw.interes ?? 0
+        }),
+        interes: resolveInterestPercentageInput({
+          interesPorcentaje: raw.interes_porcentaje ?? raw.interes ?? 0
+        }),
         total_pagar_registro: raw.total_pagar || null,
         pagos_semanales_registro: raw.pagos_semanales || null,
         pendiente_registro: raw.pendiente || null,
@@ -614,6 +623,7 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
         fecha_inicio: item.fecha_inicio,
         monto_solicitado: item.monto_solicitado,
         interes: item.interes,
+        interes_porcentaje: item.interes_porcentaje,
         num_semanas: item.num_semanas,
         total_pagar: item.total_pagar,
         total_pagar_bruto: item.total_pagar_bruto,
@@ -645,6 +655,7 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
           { key: 'fecha_inicio', label: 'fecha_inicio' },
           { key: 'monto_solicitado', label: 'monto_solicitado' },
           { key: 'interes', label: 'interes' },
+          { key: 'interes_porcentaje', label: 'interes_porcentaje' },
           { key: 'num_semanas', label: 'num_semanas' },
           { key: 'total_pagar', label: 'total_pagar' },
           { key: 'total_pagar_bruto', label: 'total_pagar_bruto' },
@@ -848,7 +859,11 @@ router.post(
       const fechaAprobacion = new Date();
       const fechaInicio = normalizeToNoon(fecha_inicio) || normalizeToNoon(new Date());
       const montoSolicitado = parseFloat(solicitud.monto_solicitado) || 0;
-      const tasaInteres = parseFloat(solicitud.tasa_variable || 0) * 100;
+      const tasaInteres = resolveInterestPercentageInput({
+        interesPorcentaje: solicitud.interes_porcentaje,
+        tasaVariable: solicitud.tasa_variable,
+        tasaBase: solicitud.tasa_base
+      });
       const modalidad = solicitud.modalidad || 'SEMANAL';
       const cuotas = resolveNumeroCuotas({
         numeroCuotas: solicitud.numero_cuotas,

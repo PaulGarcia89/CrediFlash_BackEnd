@@ -66,10 +66,15 @@ const Solicitud = sequelize.define('Solicitud', {
     allowNull: true,
     defaultValue: 'SEMANAL'
   },
+  interes_porcentaje: {
+    type: DataTypes.DECIMAL(10, 4),
+    allowNull: true,
+    defaultValue: null
+  },
   tasa_base: {
     type: DataTypes.DECIMAL(10, 4),
     allowNull: true,
-    defaultValue: 0.12
+    defaultValue: null
   },
   monto_solicitado: {
     type: DataTypes.DECIMAL(15, 2),
@@ -80,8 +85,28 @@ const Solicitud = sequelize.define('Solicitud', {
     allowNull: false
   },
   tasa_variable: {
-    type: DataTypes.DECIMAL(5, 4),
-    defaultValue: 0.12
+    type: DataTypes.DECIMAL(10, 4),
+    defaultValue: null
+  },
+  interes_total: {
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: true,
+    defaultValue: null
+  },
+  numero_cuotas: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    defaultValue: null
+  },
+  valor_cuota: {
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: true,
+    defaultValue: null
+  },
+  fecha_fin: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    defaultValue: null
   },
   estado: {
     type: DataTypes.ENUM('PENDIENTE', 'APROBADO', 'RECHAZADO'),

@@ -6,7 +6,7 @@ const router = express.Router();
 const { Solicitud, SolicitudDocumento, Cliente, Analista, ModeloAprobacion, Prestamo, Cuota, sequelize } = require('../models');
 const { Op } = require('sequelize');
 const { sendCsv } = require('../utils/exporter');
-const { calcularTasaEfectivaPorModalidad, normalizarModalidad, MODALIDADES_PERMITIDAS } = require('../utils/tasaModalidad');
+const { normalizarModalidad, MODALIDADES_PERMITIDAS } = require('../utils/tasaModalidad');
 const {
   buildInternalSolicitudOrigin,
   ensureSolicitudOrigenColumns
@@ -16,6 +16,7 @@ const {
 } = require('../utils/cuotaSchedule');
 const {
   calculateFlatLoanPricing,
+  resolveInterestPercentageInput,
   resolveNumeroCuotas
 } = require('../services/financial/loanPricingService');
 
@@ -230,16 +231,6 @@ const validarYClasificarDocumentosSolicitud = (archivos = [], reqBody = {}) => {
   ];
 };
 
-const resolverTasas = ({ modalidad, plazoSemanas, tasaVariable, tasaBase }) => {
-  const tasaBaseInput = tasaBase !== undefined && tasaBase !== null && `${tasaBase}` !== '' ? tasaBase : tasaVariable;
-
-  return calcularTasaEfectivaPorModalidad({
-    modalidad,
-    tasaBase: tasaBaseInput,
-    plazoSemanas
-  });
-};
-
 const obtenerModeloAprobacionPorTipo = async (tipo) => {
   const mapa = {
     CLIENTE_ANTIGUO: 'Modelo Cliente Antiguo',
@@ -389,7 +380,11 @@ async function aprobarSolicitudYCrearPrestamo(solicitudId, analistaId) {
 
     const financial = calculateFlatLoanPricing({
       montoOriginal: parseFloat(solicitud.monto_solicitado),
-      interesPorcentaje: parseFloat(solicitud.tasa_variable * 100),
+      interesPorcentaje: resolveInterestPercentageInput({
+        interesPorcentaje: solicitud.interes_porcentaje,
+        tasaVariable: solicitud.tasa_variable,
+        tasaBase: solicitud.tasa_base
+      }),
       modalidad: modalidadPrestamo,
       numeroCuotas,
       fechaInicio: fechaInicioPrestamo,
@@ -460,11 +455,12 @@ router.post(
     console.log('📥 SOLICITUD RECIBIDA:', req.body);
     await ensureSolicitudOrigenColumns(sequelize);
     
-    const { 
-      cliente_id, 
-      monto_solicitado, 
-      plazo_semanas, 
-      tasa_variable, 
+    const {
+      cliente_id,
+      monto_solicitado,
+      plazo_semanas,
+      interes_porcentaje,
+      tasa_variable,
       tasa_base,
       modalidad,
       modelo_aprobacion,
@@ -480,7 +476,7 @@ router.post(
     if (!monto_solicitado && monto_solicitado !== 0) errores.push('monto_solicitado es requerido');
     if (!plazo_semanas && plazo_semanas !== 0) errores.push('plazo_semanas es requerido');
     if (!modalidad) errores.push('modalidad es requerida');
-    if (!tasa_variable && tasa_variable !== 0) errores.push('tasa_variable es requerido');
+    if (interes_porcentaje === undefined && tasa_variable === undefined && tasa_base === undefined) errores.push('interes_porcentaje es requerido');
     if (!modelo_calificacion || `${modelo_calificacion}`.trim() === '') errores.push('modelo_calificacion es requerido.');
     if (!modelo_aprobacion && !modelo_aprobacion_id) errores.push('modelo_aprobacion es requerido.');
     if (!destino || `${destino}`.trim() === '') errores.push('destino es requerido');
@@ -496,8 +492,6 @@ router.post(
 
     const monto = parseFloat(monto_solicitado);
     const plazo = parseInt(plazo_semanas);
-    const tasaVariableNum = parseFloat(tasa_variable);
-
     if (isNaN(monto) || monto <= 0) {
       await eliminarArchivos(req.files || []);
       return res.status(400).json({
@@ -514,14 +508,6 @@ router.post(
       });
     }
 
-    if (isNaN(tasaVariableNum) || tasaVariableNum <= 0) {
-      await eliminarArchivos(req.files || []);
-      return res.status(400).json({
-        success: false,
-        message: 'tasa_variable debe ser mayor a 0'
-      });
-    }
-
     const modalidadNormalizada = normalizarModalidad(modalidad);
     if (!MODALIDADES_PERMITIDAS.includes(modalidadNormalizada)) {
       await eliminarArchivos(req.files || []);
@@ -531,11 +517,10 @@ router.post(
       });
     }
 
-    let tasasModalidad;
+    let interesPorcentajeVisible;
     try {
-      tasasModalidad = resolverTasas({
-        modalidad: modalidadNormalizada,
-        plazoSemanas: plazo,
+      interesPorcentajeVisible = resolveInterestPercentageInput({
+        interesPorcentaje: interes_porcentaje,
         tasaVariable: tasa_variable,
         tasaBase: tasa_base
       });
@@ -543,7 +528,7 @@ router.post(
       await eliminarArchivos(req.files || []);
       return res.status(400).json({
         success: false,
-        message: error.message || 'No se pudo calcular la tasa efectiva'
+        message: error.message || 'No se pudo interpretar el porcentaje de interés'
       });
     }
 
@@ -605,14 +590,27 @@ router.post(
       }
     }
 
+    const financialPreview = calculateFlatLoanPricing({
+      montoOriginal: monto,
+      interesPorcentaje: interesPorcentajeVisible,
+      modalidad: modalidadNormalizada,
+      numeroCuotas: plazo,
+      fechaInicio: new Date()
+    });
+
     const datosSolicitud = {
       cliente_id,
       analista_id: req.user.id,
       monto_solicitado: monto,
       plazo_semanas: plazo,
-      modalidad: tasasModalidad.modalidad,
-      tasa_base: tasasModalidad.tasa_base,
-      tasa_variable: tasasModalidad.tasa_variable,
+      modalidad: modalidadNormalizada,
+      interes_porcentaje: interesPorcentajeVisible,
+      tasa_base: interesPorcentajeVisible,
+      tasa_variable: interesPorcentajeVisible,
+      interes_total: financialPreview.interes_total,
+      numero_cuotas: financialPreview.numero_cuotas,
+      valor_cuota: financialPreview.valor_cuota,
+      fecha_fin: financialPreview.fecha_fin,
       modelo_aprobacion_id: modeloAprobacionSeleccionado.id,
       modelo_calificacion: modeloCalificacionNormalizado,
       ...buildInternalSolicitudOrigin(req.body || {}),
@@ -674,14 +672,27 @@ router.post(
       data: {
         ...payload,
         modelo_aprobacion: payload?.modelo_aprobacion?.nombre || modeloAprobacionSeleccionado.nombre,
-        documentos: documentosEstandar
+        documentos: documentosEstandar,
+        interes_porcentaje: resolveInterestPercentageInput({
+          interesPorcentaje: payload.interes_porcentaje ?? payload.tasa_variable ?? payload.tasa_base
+        }),
+        tasa_base: resolveInterestPercentageInput({
+          interesPorcentaje: payload.tasa_base ?? payload.tasa_variable ?? payload.interes_porcentaje
+        }),
+        tasa_variable: resolveInterestPercentageInput({
+          interesPorcentaje: payload.tasa_variable ?? payload.tasa_base ?? payload.interes_porcentaje
+        }),
+        interes_total: payload.interes_total,
+        numero_cuotas: payload.numero_cuotas,
+        valor_cuota: payload.valor_cuota,
+        fecha_fin: payload.fecha_fin
       },
       resumen: {
         monto: `$${monto.toFixed(2)}`,
         plazo: `${plazo} semanas`,
-        modalidad: tasasModalidad.modalidad,
-        tasa_base: `${(tasasModalidad.tasa_base * 100).toFixed(2)}%`,
-        tasa_efectiva: `${(tasasModalidad.tasa_variable * 100).toFixed(2)}%`,
+        modalidad: modalidadNormalizada,
+        tasa_base: `${interesPorcentajeVisible.toFixed(2)}%`,
+        tasa_efectiva: `${interesPorcentajeVisible.toFixed(2)}%`,
         estado: 'PENDIENTE',
         documentos: documentosClasificados.length
       }
@@ -778,8 +789,18 @@ router.get('/', authenticateToken, requirePermission('solicitudes.view'), async 
         modalidad: solicitud.modalidad || 'SEMANAL',
         monto_solicitado: solicitud.monto_solicitado,
         plazo_semanas: solicitud.plazo_semanas,
-        tasa_base: solicitud.tasa_base,
-        tasa_variable: solicitud.tasa_variable,
+        interes_porcentaje: resolveInterestPercentageInput({
+          interesPorcentaje: solicitud.interes_porcentaje ?? solicitud.tasa_variable ?? solicitud.tasa_base
+        }),
+        interes_total: solicitud.interes_total,
+        numero_cuotas: solicitud.numero_cuotas,
+        valor_cuota: solicitud.valor_cuota,
+        tasa_base: resolveInterestPercentageInput({
+          interesPorcentaje: solicitud.tasa_base ?? solicitud.tasa_variable ?? solicitud.interes_porcentaje
+        }),
+        tasa_variable: resolveInterestPercentageInput({
+          interesPorcentaje: solicitud.tasa_variable ?? solicitud.tasa_base ?? solicitud.interes_porcentaje
+        }),
         estado: solicitud.estado,
         creado_en: solicitud.creado_en,
         destino: solicitud.destino
@@ -802,6 +823,10 @@ router.get('/', authenticateToken, requirePermission('solicitudes.view'), async 
           { key: 'modalidad', label: 'modalidad' },
           { key: 'monto_solicitado', label: 'monto_solicitado' },
           { key: 'plazo_semanas', label: 'plazo_semanas' },
+          { key: 'interes_porcentaje', label: 'interes_porcentaje' },
+          { key: 'interes_total', label: 'interes_total' },
+          { key: 'numero_cuotas', label: 'numero_cuotas' },
+          { key: 'valor_cuota', label: 'valor_cuota' },
           { key: 'tasa_base', label: 'tasa_base' },
           { key: 'tasa_variable', label: 'tasa_variable' },
           { key: 'estado', label: 'estado' },
@@ -818,7 +843,18 @@ router.get('/', authenticateToken, requirePermission('solicitudes.view'), async 
         ...raw,
         modelo_aprobacion: raw?.modelo_aprobacion?.nombre || null,
         modalidad: raw.modalidad || 'SEMANAL',
-        tasa_base: raw.tasa_base ?? raw.tasa_variable,
+        interes_porcentaje: resolveInterestPercentageInput({
+          interesPorcentaje: raw.interes_porcentaje ?? raw.tasa_variable ?? raw.tasa_base
+        }),
+        interes_total: raw.interes_total,
+        numero_cuotas: raw.numero_cuotas,
+        valor_cuota: raw.valor_cuota,
+        tasa_base: resolveInterestPercentageInput({
+          interesPorcentaje: raw.tasa_base ?? raw.tasa_variable ?? raw.interes_porcentaje
+        }),
+        tasa_variable: resolveInterestPercentageInput({
+          interesPorcentaje: raw.tasa_variable ?? raw.tasa_base ?? raw.interes_porcentaje
+        }),
         documentos: (raw.documentos || []).map((doc) =>
           formatearDocumento(req, doc, raw.id, raw.cliente_id)
         )
@@ -891,7 +927,18 @@ router.get('/:id', authenticateToken, requirePermission('solicitudes.view'), asy
         ...solicitud.toJSON(),
         modelo_aprobacion: solicitud?.modelo_aprobacion?.nombre || null,
         modalidad: solicitud.modalidad || 'SEMANAL',
-        tasa_base: solicitud.tasa_base ?? solicitud.tasa_variable,
+        interes_porcentaje: resolveInterestPercentageInput({
+          interesPorcentaje: solicitud.interes_porcentaje ?? solicitud.tasa_variable ?? solicitud.tasa_base
+        }),
+        tasa_base: resolveInterestPercentageInput({
+          interesPorcentaje: solicitud.tasa_base ?? solicitud.tasa_variable ?? solicitud.interes_porcentaje
+        }),
+        tasa_variable: resolveInterestPercentageInput({
+          interesPorcentaje: solicitud.tasa_variable ?? solicitud.tasa_base ?? solicitud.interes_porcentaje
+        }),
+        interes_total: solicitud.interes_total,
+        numero_cuotas: solicitud.numero_cuotas,
+        valor_cuota: solicitud.valor_cuota,
         documentos: (solicitud.documentos || []).map((doc) =>
           formatearDocumento(req, doc, solicitud.id, solicitud.cliente_id)
         ),
@@ -983,27 +1030,37 @@ router.put('/:id', authenticateToken, requirePermission('solicitudes.create'), a
       }
     }
 
-    const tasaBaseFinal = req.body.tasa_base !== undefined
-      ? req.body.tasa_base
-      : (req.body.tasa_variable !== undefined ? req.body.tasa_variable : (solicitud.tasa_base ?? solicitud.tasa_variable));
-
-    let tasasModalidad;
+    let interesPorcentajeVisible;
     try {
-      tasasModalidad = resolverTasas({
-        modalidad: modalidadFinal,
-        plazoSemanas: plazoFinal,
-        tasaBase: tasaBaseFinal
+      interesPorcentajeVisible = resolveInterestPercentageInput({
+        interesPorcentaje: req.body.interes_porcentaje ?? solicitud.interes_porcentaje,
+        tasaVariable: req.body.tasa_variable ?? solicitud.tasa_variable,
+        tasaBase: req.body.tasa_base ?? solicitud.tasa_base
       });
     } catch (error) {
       return res.status(400).json({
         success: false,
-        message: error.message || 'No se pudo calcular la tasa efectiva'
+        message: error.message || 'No se pudo interpretar el porcentaje de interés'
       });
     }
 
-    updates.modalidad = tasasModalidad.modalidad;
-    updates.tasa_base = tasasModalidad.tasa_base;
-    updates.tasa_variable = tasasModalidad.tasa_variable;
+    const financialPreview = calculateFlatLoanPricing({
+      montoOriginal: updates.monto_solicitado !== undefined ? updates.monto_solicitado : parseFloat(solicitud.monto_solicitado),
+      interesPorcentaje: interesPorcentajeVisible,
+      modalidad: modalidadFinal,
+      numeroCuotas: plazoFinal,
+      fechaInicio: solicitud.creado_en || new Date(),
+      fechaAprobacion: solicitud.fecha_aprobacion || null
+    });
+
+    updates.modalidad = financialPreview.modalidad;
+    updates.interes_porcentaje = financialPreview.interes_porcentaje;
+    updates.tasa_base = financialPreview.interes_porcentaje;
+    updates.tasa_variable = financialPreview.interes_porcentaje;
+    updates.interes_total = financialPreview.interes_total;
+    updates.numero_cuotas = financialPreview.numero_cuotas;
+    updates.valor_cuota = financialPreview.valor_cuota;
+    updates.fecha_fin = financialPreview.fecha_fin;
 
     await solicitud.update(updates);
 
@@ -1024,7 +1081,19 @@ router.put('/:id', authenticateToken, requirePermission('solicitudes.create'), a
         ...solicitudActualizada.toJSON(),
         modelo_aprobacion: solicitudActualizada?.modelo_aprobacion?.nombre || null,
         modalidad: solicitudActualizada.modalidad || 'SEMANAL',
-        tasa_base: solicitudActualizada.tasa_base ?? solicitudActualizada.tasa_variable
+        interes_porcentaje: resolveInterestPercentageInput({
+          interesPorcentaje: solicitudActualizada.interes_porcentaje ?? solicitudActualizada.tasa_variable ?? solicitudActualizada.tasa_base
+        }),
+        tasa_base: resolveInterestPercentageInput({
+          interesPorcentaje: solicitudActualizada.tasa_base ?? solicitudActualizada.tasa_variable ?? solicitudActualizada.interes_porcentaje
+        }),
+        tasa_variable: resolveInterestPercentageInput({
+          interesPorcentaje: solicitudActualizada.tasa_variable ?? solicitudActualizada.tasa_base ?? solicitudActualizada.interes_porcentaje
+        }),
+        interes_total: solicitudActualizada.interes_total,
+        numero_cuotas: solicitudActualizada.numero_cuotas,
+        valor_cuota: solicitudActualizada.valor_cuota,
+        fecha_fin: solicitudActualizada.fecha_fin
       }
     });
   } catch (error) {
