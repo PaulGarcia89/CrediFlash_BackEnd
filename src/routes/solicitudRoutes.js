@@ -611,8 +611,8 @@ router.post(
       plazo_semanas: plazo,
       modalidad: modalidadNormalizada,
       interes_porcentaje: interesPorcentajeVisible,
-      tasa_base: interesPorcentajeVisible,
-      tasa_variable: interesPorcentajeVisible,
+      tasa_base: Number((interesPorcentajeVisible / 100).toFixed(4)),
+      tasa_variable: Number((interesPorcentajeVisible / 100).toFixed(4)),
       interes_total: financialPreview.interes_total,
       numero_cuotas: financialPreview.numero_cuotas,
       valor_cuota: financialPreview.valor_cuota,
@@ -1064,8 +1064,8 @@ router.put('/:id', authenticateToken, requirePermission('solicitudes.create'), a
 
     updates.modalidad = financialPreview.modalidad;
     updates.interes_porcentaje = financialPreview.interes_porcentaje;
-    updates.tasa_base = financialPreview.interes_porcentaje;
-    updates.tasa_variable = financialPreview.interes_porcentaje;
+    updates.tasa_base = Number((financialPreview.interes_porcentaje / 100).toFixed(4));
+    updates.tasa_variable = Number((financialPreview.interes_porcentaje / 100).toFixed(4));
     updates.interes_total = financialPreview.interes_total;
     updates.numero_cuotas = financialPreview.numero_cuotas;
     updates.valor_cuota = financialPreview.valor_cuota;

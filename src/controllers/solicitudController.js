@@ -77,8 +77,8 @@ class SolicitudController {
         plazo_semanas: parseInt(plazo_semanas),
         modalidad: 'SEMANAL',
         interes_porcentaje: financialPreview.interes_porcentaje,
-        tasa_base: financialPreview.interes_porcentaje,
-        tasa_variable: financialPreview.interes_porcentaje,
+        tasa_base: Number((financialPreview.interes_porcentaje / 100).toFixed(4)),
+        tasa_variable: Number((financialPreview.interes_porcentaje / 100).toFixed(4)),
         interes_total: financialPreview.interes_total,
         numero_cuotas: financialPreview.numero_cuotas,
         valor_cuota: financialPreview.valor_cuota,
@@ -401,9 +401,9 @@ class SolicitudController {
           tasaVariable: tasa_variable,
           tasaBase: tasa_variable
         });
-        updates.tasa_variable = tasaVariableVisible;
+        updates.tasa_variable = Number((tasaVariableVisible / 100).toFixed(4));
         updates.interes_porcentaje = tasaVariableVisible;
-        updates.tasa_base = tasaVariableVisible;
+        updates.tasa_base = Number((tasaVariableVisible / 100).toFixed(4));
       }
       if (modelo_aprobacion_id !== undefined) updates.modelo_aprobacion_id = modelo_aprobacion_id;
       if (modelo_calificacion !== undefined) updates.modelo_calificacion = modelo_calificacion;
