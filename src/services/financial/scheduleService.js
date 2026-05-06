@@ -62,8 +62,8 @@ const formatDateOnly = (value) => {
 
 const getIntervalSpec = (modalidad = 'SEMANAL') => {
   const normalized = String(modalidad || 'SEMANAL').trim().toUpperCase();
-  if (normalized === 'QUINCENAL') return { type: 'days', value: 15 };
-  if (normalized === 'MENSUAL') return { type: 'months', value: 1 };
+  if (normalized === 'QUINCENAL') return { type: 'days', value: 14 };
+  if (normalized === 'MENSUAL') return { type: 'days', value: 30 };
   return { type: 'days', value: 7 };
 };
 
