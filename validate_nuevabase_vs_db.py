@@ -114,6 +114,13 @@ def parse_status_pending(status_text):
     return None
 
 
+def normalize_status(status_text):
+    text = key_name(status_text)
+    if text == "NO DEBE NADA":
+        return "PAGADO"
+    return text
+
+
 def load_excel_rows():
     ws = load_workbook(EXCEL_PATH, data_only=True)["Sheet1"]
     data = []
@@ -131,7 +138,7 @@ def load_excel_rows():
         sequence[base_key] += 1
         seq = sequence[base_key]
 
-        status = clean_text(ws.cell(row_num, 18).value)
+        status = clean_text(ws.cell(row_num, 30).value)
         data.append(
             {
                 "excel_row": row_num,
@@ -139,11 +146,11 @@ def load_excel_rows():
                 "fecha_inicio": fecha_inicio,
                 "monto_solicitado": monto_solicitado.quantize(Decimal("0.01")),
                 "seq": seq,
-                "pagos_hechos": to_int(ws.cell(row_num, 14).value, 0),
-                "pagos_pendientes": to_int(ws.cell(row_num, 15).value, 0),
-                "pagado": to_decimal(ws.cell(row_num, 16).value).quantize(Decimal("0.01")),
-                "pendiente": to_decimal(ws.cell(row_num, 17).value).quantize(Decimal("0.01")),
-                "status": status,
+                "pagos_hechos": to_int(ws.cell(row_num, 26).value, 0),
+                "pagos_pendientes": to_int(ws.cell(row_num, 27).value, 0),
+                "pagado": to_decimal(ws.cell(row_num, 28).value).quantize(Decimal("0.01")),
+                "pendiente": to_decimal(ws.cell(row_num, 29).value).quantize(Decimal("0.01")),
+                "status": normalize_status(status),
                 "status_pending": parse_status_pending(status),
             }
         )
@@ -195,7 +202,7 @@ def load_db_rows(conn):
                 "pagos_pendientes": int(pagos_pendientes or 0),
                 "pagado": to_decimal(pagado).quantize(Decimal("0.01")),
                 "pendiente": to_decimal(pendiente).quantize(Decimal("0.01")),
-                "status": clean_text(status),
+                "status": normalize_status(status),
             }
         )
     return grouped
