@@ -3,6 +3,7 @@ import re
 import csv
 import uuid
 import hashlib
+import unicodedata
 from datetime import datetime, timedelta, date
 from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 
@@ -18,6 +19,8 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 EXCEL_PATH = os.environ["EXCEL_PATH"]
 DOCS_DIR = os.environ.get("DOCS_DIR", "").strip() or None
 DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
+SKIP_RESET = os.environ.get("SKIP_RESET", "false").lower() == "true"
+ALLOW_CLIENT_FALLBACK = os.environ.get("ALLOW_CLIENT_FALLBACK", "false").lower() == "true"
 
 SHEET_CLIENTES = "REGISTRO CLIENTES"
 SHEET_PRESTAMOS = "CONTROL PRESTAMOS"
@@ -53,6 +56,14 @@ def clean(s):
 
 def upper(s):
     return clean(s).upper()
+
+def normalize_name_key(value):
+    text = upper(value)
+    text = unicodedata.normalize("NFD", text)
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+    text = re.sub(r"[^A-Z0-9 ]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 SPANISH_MONTHS = {
     "ENE": 1,
@@ -228,6 +239,10 @@ def get_sheet_by_candidates(wb, candidates, required=False):
         raise KeyError(f"Ninguna hoja encontrada entre: {candidates}. Hojas disponibles: {wb.sheetnames}")
     return None
 
+def header_map(ws):
+    first_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), [])
+    return {upper(cell): idx for idx, cell in enumerate(first_row) if clean(cell)}
+
 
 # =========================
 # DB utilities
@@ -242,6 +257,12 @@ def ensure_columns(cur):
 def reset_business_tables(cur):
     cur.execute("""
         TRUNCATE TABLE
+          public.modelos_aprobacion,
+          public.notificaciones_envios,
+          public.auditoria_eventos,
+          public.audit_logs,
+          public.pagos_bancarios_cargados,
+          public.clientes_temp,
           public.cuotas,
           public.prestamos,
           public.solicitud_documentos,
@@ -268,17 +289,90 @@ def upsert_default_modelo_aprobacion(cur):
     """, (new_id, "Modelo Cliente Antiguo", "{}", 0, True))
     return new_id
 
+def load_existing_clients_map(cur):
+    cur.execute("""
+        SELECT
+          id,
+          nombre,
+          apellido,
+          upper(trim(regexp_replace(concat_ws(' ', nombre, apellido), '\\s+', ' ', 'g'))) AS nombre_norm
+        FROM public.clientes
+    """)
+    clientes = {}
+    for row in cur.fetchall():
+        if not row:
+            continue
+        cliente_id, nombre, apellido, nombre_norm = row
+        if nombre_norm:
+            clientes[normalize_name_key(nombre_norm)] = cliente_id
+        nombre_key = normalize_name_key(nombre)
+        apellido_key = clean(apellido).strip().upper()
+        if nombre_key:
+            clientes.setdefault(nombre_key, cliente_id)
+        if apellido_key in {"", "N/A", "NA", "NONE", "NULL"} and nombre_key:
+            clientes.setdefault(nombre_key, cliente_id)
+    return clientes
+
 
 # =========================
 # Parsing Excel
 # =========================
 def load_client_rows(wb):
-    ws = get_sheet_by_candidates(wb, [SHEET_CLIENTES], required=False)
+    ws = get_sheet_by_candidates(wb, [SHEET_CLIENTES, "Sheet1", "SHEET1"], required=False)
     if ws is None:
-        print(f"ℹ️ Hoja '{SHEET_CLIENTES}' no encontrada. Se crearán clientes desde la hoja de préstamos.")
+        print("ℹ️ No se encontró hoja de clientes. Se omite carga de clientes.")
         return []
+
+    headers = header_map(ws)
     rows = []
+    has_new_client_headers = "NOMBRE" in headers and ("TELÉFONO" in headers or "TELEFONO" in headers) and ("CORREO ELECTRÓNICO" in headers or "CORREO ELECTRONICO" in headers)
+    has_legacy_client_sheet = upper(ws.title) in {upper(SHEET_CLIENTES), "REGISTRO CLIENTES"}
+
+    # Formato nuevo: MES, #, NOMBRE, Teléfono, Correo electrónico, CONTACTO DE EMERGENCIA, Teléfono2, REFERIDOS, CALIFICACION
+    if has_new_client_headers:
+        col_nombre = headers["NOMBRE"]
+        col_telefono = headers.get("TELÉFONO", headers.get("TELEFONO"))
+        col_email = headers.get("CORREO ELECTRÓNICO", headers.get("CORREO ELECTRONICO"))
+        col_contacto = headers.get("CONTACTO DE EMERGENCIA")
+        col_contacto_tel = headers.get("TELÉFONO2", headers.get("TELEFONO2"))
+        col_referidos = headers.get("REFERIDOS")
+        col_calificacion = headers.get("CALIFICACION")
+
+        for r in ws.iter_rows(min_row=2, values_only=True):
+            nombre = clean(r[col_nombre] if col_nombre is not None else None)
+            if not nombre or upper(nombre) in {"NOMBRE", "TOTAL"}:
+                continue
+            contacto_nombre = None
+            if col_contacto is not None:
+                contacto_nombre = clean(r[col_contacto])[:100] or None
+            contacto_telefono = None
+            if col_contacto_tel is not None:
+                contacto_telefono = normalize_phone(r[col_contacto_tel])
+            referido_por = None
+            if col_referidos is not None:
+                referido_por = clean(r[col_referidos])[:150] or None
+            calificacion = None
+            if col_calificacion is not None:
+                calificacion = clean(r[col_calificacion])[:200] or None
+            rows.append({
+                "nombre_full": nombre,
+                "telefono": normalize_phone(r[col_telefono]) if col_telefono is not None else None,
+                "email": normalize_email(r[col_email]) if col_email is not None else None,
+                "contacto_nombre": contacto_nombre,
+                "contacto_telefono": contacto_telefono,
+                "referido_por": referido_por,
+                "calificacion": calificacion
+                })
+        return rows
+
+    # Formato legado: hoja REGISTRO CLIENTES
+    if not has_legacy_client_sheet:
+        print(f"ℹ️ Hoja '{ws.title}' no parece ser de clientes. Se omite carga de clientes.")
+        return []
+
     for r in ws.iter_rows(min_row=2, values_only=True):
+        if len(r) < 9:
+            continue
         nombre = clean(r[2])
         if not nombre or upper(nombre) in {"NOMBRE", "TOTAL"}:
             continue
@@ -294,7 +388,17 @@ def load_client_rows(wb):
     return rows
 
 def load_loan_rows(wb):
-    ws = get_sheet_by_candidates(wb, [SHEET_PRESTAMOS, "Sheet1", "SHEET1", "CONTROL PRESTAMOS"], required=True)
+    ws = get_sheet_by_candidates(wb, [SHEET_PRESTAMOS, "CONTROL PRESTAMOS", "Sheet1", "SHEET1"], required=False)
+    if ws is None:
+        print("ℹ️ No se encontró hoja de préstamos. Se omite carga de préstamos.")
+        return []
+
+    headers = header_map(ws)
+    required = {"FECHA", "NOMBRE", "MONTO SOLICITADO", "INTERES", "MODALIDAD", "SEMANAS", "TOTAL A PAGAR"}
+    if not required.issubset(headers):
+        print(f"ℹ️ Hoja '{ws.title}' no parece ser de préstamos. Se omite carga de préstamos.")
+        return []
+
     rows = []
     for idx, r in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
         nombre = clean(r[3])
@@ -385,6 +489,7 @@ def load_loan_rows(wb):
             "num_semanas": semanas,
             "num_dias": dias,
             "fecha_vencimiento": fecha_venc,
+            "anio_vencimiento": fecha_venc.year if fecha_venc else None,
             "monto_solicitado": monto,
             "tasa_variable": tasa,
             "total_pagar": total,
@@ -418,7 +523,7 @@ def main():
 
     try:
         ensure_columns(cur)
-        if not DRY_RUN:
+        if not DRY_RUN and not SKIP_RESET:
             reset_business_tables(cur)
 
         modelo_aprobacion_id = upsert_default_modelo_aprobacion(cur)
@@ -453,30 +558,41 @@ def main():
                         referido_flag, c["referido_por"], observ[:500]
                     ))
 
-                clients_by_name[upper(c["nombre_full"])] = cid
+                clients_by_name[normalize_name_key(c["nombre_full"])] = cid
                 created["clientes"] += 1
             except Exception as e:
                 errors.append([SHEET_CLIENTES, "-", c["nombre_full"], f"ERROR_CLIENTE: {e}"])
 
+        if SKIP_RESET or not client_rows:
+            try:
+                existing_clients = load_existing_clients_map(cur)
+                for key, value in existing_clients.items():
+                    clients_by_name.setdefault(key, value)
+            except Exception as e:
+                errors.append(["DB_CLIENTES", "-", "-", f"ERROR_MAPEO_CLIENTES: {e}"])
+
         # 2) solicitudes + prestamos + cuotas + documentos
         for p in loan_rows:
             try:
-                key = upper(p["nombre_full"])
+                key = normalize_name_key(p["nombre_full"])
                 cliente_id = clients_by_name.get(key)
 
                 if not cliente_id:
-                    # crear cliente fallback
-                    cid = str(uuid.uuid4())
-                    n, a = split_name(p["nombre_full"])
-                    if not DRY_RUN:
-                        cur.execute("""
-                            INSERT INTO public.clientes (
-                              id, fecha_registro, nombre, apellido, estado, observaciones, origen
-                            ) VALUES (%s, NOW(), %s, %s, 'ACTIVO', %s, 'PUBLIC_FORM')
-                        """, (cid, n[:100], a[:100], f"{ORIGEN_TAG} | CREADO_DESDE_PRESTAMO"))
-                    cliente_id = cid
-                    clients_by_name[key] = cid
-                    created["clientes"] += 1
+                    if ALLOW_CLIENT_FALLBACK:
+                        cid = str(uuid.uuid4())
+                        n, a = split_name(p["nombre_full"])
+                        if not DRY_RUN:
+                            cur.execute("""
+                                INSERT INTO public.clientes (
+                                  id, fecha_registro, nombre, apellido, estado, observaciones, origen
+                                ) VALUES (%s, NOW(), %s, %s, 'ACTIVO', %s, 'PUBLIC_FORM')
+                            """, (cid, n[:100], a[:100], f"{ORIGEN_TAG} | CREADO_DESDE_PRESTAMO"))
+                        cliente_id = cid
+                        clients_by_name[key] = cid
+                        created["clientes"] += 1
+                    else:
+                        errors.append([SHEET_PRESTAMOS, p["excel_row"], p["nombre_full"], "CLIENTE_NO_ENCONTRADO"])
+                        continue
 
                 solicitud_id = str(uuid.uuid4())
                 prestamo_id = str(uuid.uuid4())
@@ -516,7 +632,7 @@ def main():
                           %s, %s, %s, %s,
                           %s, %s, %s, %s, %s,
                           %s, %s, %s, 0, 0, 0, 0,
-                          NULL, 0, NULL, NULL
+                          NULL, 0, NULL, %s
                         )
                     """, (
                         prestamo_id, solicitud_id,
@@ -524,7 +640,7 @@ def main():
                         p["nombre_full"][:200], p["monto_solicitado"], interes_pct_int, p["modalidad"],
                         p["num_semanas"], p["num_dias"], fecha_venc_dt, fecha_ini_dt,
                         p["total_pagar"], p["ganancias"], p["pagos_semanales"], p["pagos_hechos"], p["pagos_pendientes"],
-                        p["pagado"], p["pendiente"], p["status"][:100]
+                        p["pagado"], p["pendiente"], p["status"][:100], p.get("anio_vencimiento")
                     ))
 
                 created["solicitudes"] += 1

@@ -857,7 +857,7 @@ router.post(
         caso_especial: null,
         oferta: 0,
         proyeccion_mes: null,
-        anio_vencimiento: null,
+        anio_vencimiento: fechaVencimiento,
         contrato: contratoRutaRelativa || null
       }, { transaction });
 
