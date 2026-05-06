@@ -1188,7 +1188,24 @@ router.get('/:id/prestamos', authenticateToken, requirePermission('prestamos.vie
         {
           model: Cuota,
           as: 'cuotas',
-          attributes: ['id', 'monto_total', 'monto_pagado', 'estado', 'fecha_vencimiento'],
+          attributes: [
+            'id',
+            'numero_cuota',
+            'fecha_vencimiento',
+            'capital_programado',
+            'interes_programado',
+            'total_programado',
+            'monto_capital',
+            'monto_interes',
+            'monto_total',
+            'estado',
+            'fecha_pago',
+            'monto_pagado',
+            'capital_pagado',
+            'interes_pagado',
+            'mora_pagada',
+            'saldo_restante'
+          ],
           required: false
         }
       ],
