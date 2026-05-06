@@ -582,6 +582,8 @@ router.post(
       });
     }
 
+    await ensureSolicitudDocumentoTipoColumn();
+
     let modeloCalificacionNormalizado = null;
     if (modelo_calificacion !== undefined && modelo_calificacion !== null && `${modelo_calificacion}`.trim() !== '') {
       modeloCalificacionNormalizado = normalizarModeloCalificacion(modelo_calificacion);
@@ -624,7 +626,6 @@ router.post(
     };
 
     const resultado = await sequelize.transaction(async (transaction) => {
-      await ensureSolicitudDocumentoTipoColumn();
       const solicitud = await Solicitud.create(datosSolicitud, { transaction });
 
       if (documentosClasificados.length > 0) {
