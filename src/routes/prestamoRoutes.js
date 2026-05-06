@@ -18,6 +18,9 @@ const {
   resolveNumeroCuotas
 } = require('../services/financial/loanPricingService');
 const {
+  ensureSolicitudFinancialColumns
+} = require('../utils/solicitudFinancialColumns');
+const {
   applyWeeklyPaymentToQuotas,
   round2
 } = require('../utils/weeklyPaymentApplication');
@@ -826,10 +829,12 @@ router.post(
       });
     }
 
+    await ensureSolicitudFinancialColumns(sequelize);
+    await ensureSolicitudDocumentoSchema();
+    await ensurePrestamoContratoColumn();
+    await ensureClienteReferidosColumns();
+
     const resultado = await sequelize.transaction(async (transaction) => {
-      await ensureSolicitudDocumentoSchema();
-      await ensurePrestamoContratoColumn();
-      await ensureClienteReferidosColumns();
       const solicitud = await Solicitud.findByPk(solicitudId, {
         transaction
       });
