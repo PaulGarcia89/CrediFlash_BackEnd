@@ -153,22 +153,27 @@ const validarYClasificarDocumentosSolicitud = (archivos = [], reqBody = {}) => {
 
   if (tipoDocumentoIdentidad !== 'ID') throw new Error('tipo_documento_identidad inválido. Debe ser ID.');
   if (tipoDocumentosEstadoCuenta !== 'ESTADO_CUENTA') throw new Error('tipo_documentos_estado_cuenta inválido. Debe ser ESTADO_CUENTA.');
-  if (archivos.length === 0) throw new Error('Debe cargar un documento de identidad en PDF');
-  if (archivos.length < 2) throw new Error('Debe cargar al menos 1 estado de cuenta en PDF');
-  if (archivos.length > 3) throw new Error('Solo se permiten 1 o 2 estados de cuenta en PDF');
+  if (!Array.isArray(archivos) || archivos.length === 0) return [];
+  if (archivos.length > 3) throw new Error('Solo se permiten hasta 3 documentos PDF');
 
   const noPdf = archivos.find((file) => file.mimetype !== 'application/pdf');
   if (noPdf) throw new Error('Tipo de archivo inválido');
 
-  const [archivoIdentidad, ...archivosEstadoCuenta] = archivos;
-  if (!archivoIdentidad) throw new Error('Debe cargar un documento de identidad en PDF');
-  if (archivosEstadoCuenta.length < 1) throw new Error('Debe cargar al menos 1 estado de cuenta en PDF');
-  if (archivosEstadoCuenta.length > 2) throw new Error('Solo se permiten 1 o 2 estados de cuenta en PDF');
+  const clasificarArchivo = (archivo, index) => {
+    const nombre = normalizarTexto(archivo?.originalname || archivo?.filename || '').toLowerCase();
+    const esIdentidad = /ident|id|documento[_-]?identidad/.test(nombre);
+    const esEstadoCuenta = /statement|estado[_-]?cuenta|account[_-]?statement/.test(nombre);
 
-  return [
-    { archivo: archivoIdentidad, tipo_documento: 'ID' },
-    ...archivosEstadoCuenta.map((archivo) => ({ archivo, tipo_documento: 'ESTADO_CUENTA' }))
-  ];
+    if (esIdentidad && !esEstadoCuenta) return 'ID';
+    if (esEstadoCuenta && !esIdentidad) return 'ESTADO_CUENTA';
+
+    return index === 0 ? 'ID' : 'ESTADO_CUENTA';
+  };
+
+  return archivos.map((archivo, index) => ({
+    archivo,
+    tipo_documento: clasificarArchivo(archivo, index)
+  }));
 };
 
 const resolverModeloAprobacion = async (modeloAprobacionInput) => {
