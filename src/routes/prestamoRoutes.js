@@ -1283,6 +1283,9 @@ router.post('/:id/pago-semanal', authenticateToken, requirePermission('prestamos
         transaction
       });
 
+      const hoy = new Date();
+      hoy.setHours(0, 0, 0, 0);
+
       const metrics = cuotasActualizadas.reduce((acc, item) => {
         const total = parseFloat(item.monto_total || 0);
         const pagado = parseFloat(item.monto_pagado || 0);
@@ -1303,8 +1306,6 @@ router.post('/:id/pago-semanal', authenticateToken, requirePermission('prestamos
         cuotasConSaldo: 0,
         hayMora: false
       });
-      const hoy = new Date();
-      hoy.setHours(0, 0, 0, 0);
 
       const pagadoTotal = resultadoAplicacion.pagadoTotal;
       const pendienteTotal = resultadoAplicacion.saldoPendienteTotal;
