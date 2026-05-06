@@ -857,7 +857,8 @@ router.post(
     }
 
     const prestamoExistente = await Prestamo.findOne({
-      where: { solicitud_id: solicitud.id }
+      where: { solicitud_id: solicitud.id },
+      attributes: ['id', 'solicitud_id']
     });
 
     if (prestamoExistente) {
@@ -917,7 +918,8 @@ router.post(
       const prestamoExistenteTx = await Prestamo.findOne({
         where: { solicitud_id: solicitudTx.id },
         transaction,
-        lock: transaction.LOCK.UPDATE
+        lock: transaction.LOCK.UPDATE,
+        attributes: ['id', 'solicitud_id']
       });
 
       if (prestamoExistenteTx) {
