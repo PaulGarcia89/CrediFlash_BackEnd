@@ -563,8 +563,7 @@ const generarTopMorasDiarias = async ({ top, startYmd = null, endYmd = null, fil
   });
 
   const rows = Array.from(grouped.values())
-    .sort((a, b) => b.monto_mora_hoy - a.monto_mora_hoy)
-    .slice(0, top);
+    .sort((a, b) => b.monto_mora_hoy - a.monto_mora_hoy);
 
   return {
     tipo: 'top-moras-diarias',
