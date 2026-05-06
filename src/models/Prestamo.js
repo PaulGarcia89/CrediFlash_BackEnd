@@ -36,18 +36,37 @@ const Prestamo = sequelize.define('Prestamo', {
   mes: DataTypes.STRING(20),
   anio: DataTypes.STRING(4),
   nombre_completo: DataTypes.STRING(200),
+  monto_original: {
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: true,
+    defaultValue: null
+  },
   monto_solicitado: {
     type: DataTypes.DECIMAL(15, 2),
     allowNull: false
+  },
+  interes_porcentaje: {
+    type: DataTypes.DECIMAL(15, 4),
+    allowNull: true,
+    defaultValue: null
   },
   interes: {
     type: DataTypes.INTEGER,
     allowNull: false,
     defaultValue: 0
   },
+  interes_total: {
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: true,
+    defaultValue: null
+  },
   modalidad: {
     type: DataTypes.STRING(50),
     defaultValue: 'SEMANAL'
+  },
+  numero_cuotas: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0
   },
   num_semanas: {
     type: DataTypes.INTEGER,
@@ -62,9 +81,18 @@ const Prestamo = sequelize.define('Prestamo', {
     type: DataTypes.DATE,
     allowNull: true
   },
+  fecha_fin: {
+    type: DataTypes.DATE,
+    allowNull: true
+  },
   total_pagar: {
     type: DataTypes.DECIMAL(15, 2),
     defaultValue: 0
+  },
+  valor_cuota: {
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: true,
+    defaultValue: null
   },
   ganancias: {
     type: DataTypes.DECIMAL(15, 2),
@@ -157,6 +185,10 @@ Object.defineProperty(Prestamo.prototype, 'estado', {
 
 Object.defineProperty(Prestamo.prototype, 'plazo_meses', {
   get() {
+    if (Number(this.numero_cuotas) > 0) {
+      return Number(this.numero_cuotas);
+    }
+
     // Calcular a partir de num_semanas si es semanal, o usar valor por defecto
     if (this.modalidad === 'SEMANAL' && this.num_semanas > 0) {
       return Math.ceil(this.num_semanas / 4.33); // Aproximación de semanas a meses
@@ -164,9 +196,12 @@ Object.defineProperty(Prestamo.prototype, 'plazo_meses', {
     return 12; // Valor por defecto
   },
   set(value) {
-    // Si se establece plazo_meses, ajustar num_semanas
+    // Si se establece plazo_meses, ajustar numero_cuotas y num_semanas
+    this.numero_cuotas = value;
     if (this.modalidad === 'SEMANAL') {
       this.num_semanas = value * 4.33; // Aproximación de meses a semanas
+    } else {
+      this.num_semanas = value;
     }
   },
   enumerable: true,

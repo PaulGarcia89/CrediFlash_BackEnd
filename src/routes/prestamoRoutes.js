@@ -13,6 +13,10 @@ const {
   resolveWeeklyFirstDueDate
 } = require('../utils/cuotaSchedule');
 const {
+  calculateFlatLoanPricing,
+  resolveNumeroCuotas
+} = require('../services/financial/loanPricingService');
+const {
   applyWeeklyPaymentToQuotas,
   round2
 } = require('../utils/weeklyPaymentApplication');
@@ -30,20 +34,27 @@ const toMoneyNumber = (value) => {
 };
 
 const buildFinancialSummaryFromBase = (prestamo = {}) => {
-  const montoSolicitado = toMoneyNumber(prestamo.monto_solicitado) || 0;
-  const interes = toMoneyNumber(prestamo.interes) || 0;
-  const numSemanas = Number(prestamo.num_semanas) || 0;
+  const montoOriginal = toMoneyNumber(prestamo.monto_original ?? prestamo.monto_solicitado) || 0;
+  const interesPorcentaje = toMoneyNumber(prestamo.interes_porcentaje ?? prestamo.interes) || 0;
+  const interesTotalCanonico = toMoneyNumber(prestamo.interes_total);
+  const numeroCuotas = Number(prestamo.numero_cuotas || prestamo.num_semanas) || 0;
+  const valorCuotaCanonico = toMoneyNumber(prestamo.valor_cuota);
   const pagado = toMoneyNumber(prestamo.pagado) || 0;
 
-  const totalPagar = round2(montoSolicitado + (montoSolicitado * interes / 100));
-  const pagosSemanales = numSemanas > 0 ? round2(totalPagar / numSemanas) : totalPagar;
+  const interesTotal = Number.isFinite(interesTotalCanonico)
+    ? round2(interesTotalCanonico)
+    : round2(montoOriginal * (interesPorcentaje / 100));
+  const totalPagar = round2((montoOriginal || 0) + interesTotal);
+  const pagosSemanales = Number.isFinite(valorCuotaCanonico)
+    ? round2(valorCuotaCanonico)
+    : (numeroCuotas > 0 ? round2(totalPagar / numeroCuotas) : totalPagar);
   const pendiente = Math.max(round2(totalPagar - pagado), 0);
 
   return {
     totalPagar,
     pagosSemanales,
     pendiente,
-    ganancias: round2(totalPagar - montoSolicitado)
+    ganancias: round2(interesTotal)
   };
 };
 
@@ -684,7 +695,10 @@ router.post('/', authenticateToken, requirePermission('prestamos.create'), async
       solicitud_id, 
       monto_solicitado, 
       interes,
-      fecha_inicio 
+      fecha_inicio,
+      modalidad,
+      numero_cuotas,
+      num_semanas
     } = req.body;
 
     if (!solicitud_id || !monto_solicitado) {
@@ -694,20 +708,61 @@ router.post('/', authenticateToken, requirePermission('prestamos.create'), async
       });
     }
 
+    const fechaInicioPrestamo = normalizeToNoon(fecha_inicio) || normalizeToNoon(new Date());
+    const cuotasInput = numero_cuotas !== undefined && numero_cuotas !== null && `${numero_cuotas}` !== ''
+      ? numero_cuotas
+      : num_semanas;
+    const financial = calculateFlatLoanPricing({
+      montoOriginal: monto_solicitado,
+      interesPorcentaje: interes || 0,
+      modalidad: modalidad || 'SEMANAL',
+      numeroCuotas: cuotasInput,
+      fechaInicio: fechaInicioPrestamo
+    });
+
     const prestamo = await Prestamo.create({
       solicitud_id,
-      fecha_inicio: fecha_inicio || new Date(),
-      monto_solicitado: parseFloat(monto_solicitado),
+      fecha_inicio: fechaInicioPrestamo,
+      fecha_fin: financial.fecha_fin,
+      monto_original: financial.monto_original,
+      monto_solicitado: financial.monto_original,
+      interes_porcentaje: financial.interes_porcentaje,
       interes: interes || 0,
-      total_pagar: parseFloat(monto_solicitado) + (parseFloat(monto_solicitado) * (interes || 0) / 100),
-      pendiente: parseFloat(monto_solicitado) + (parseFloat(monto_solicitado) * (interes || 0) / 100),
-      status: 'ACTIVO'
+      interes_total: financial.interes_total,
+      modalidad: financial.modalidad,
+      numero_cuotas: financial.numero_cuotas,
+      num_semanas: financial.numero_cuotas,
+      total_pagar: financial.total_pagar,
+      valor_cuota: financial.valor_cuota,
+      pagos_semanales: financial.valor_cuota,
+      pendiente: financial.total_pagar,
+      pagos_pendientes: financial.numero_cuotas,
+      pagos_hechos: 0,
+      pagado: 0,
+      status: 'ACTIVO',
+      anio_vencimiento: financial.fecha_fin
     });
+
+    if (financial.cronograma.length > 0) {
+      await Cuota.bulkCreate(financial.cronograma.map((cuota) => ({
+        ...cuota,
+        prestamo_id: prestamo.id
+      })));
+    }
 
     res.status(201).json({
       success: true,
       message: 'Préstamo creado exitosamente',
-      data: prestamo
+      data: {
+        ...prestamo.toJSON(),
+        monto_original: financial.monto_original,
+        interes_porcentaje: financial.interes_porcentaje,
+        interes_total: financial.interes_total,
+        valor_cuota: financial.valor_cuota,
+        numero_cuotas: financial.numero_cuotas,
+        fecha_fin: financial.fecha_fin,
+        cronograma: financial.cronograma
+      }
     });
   } catch (error) {
     console.error('Error creando préstamo:', error);
@@ -795,33 +850,29 @@ router.post(
       const montoSolicitado = parseFloat(solicitud.monto_solicitado) || 0;
       const tasaInteres = parseFloat(solicitud.tasa_variable || 0) * 100;
       const modalidad = solicitud.modalidad || 'SEMANAL';
-      const semanas = parseInt(solicitud.plazo_semanas, 10);
+      const cuotas = resolveNumeroCuotas({
+        numeroCuotas: solicitud.numero_cuotas,
+        plazoSemanas: solicitud.plazo_semanas,
+        modalidad
+      });
 
-      if (!Number.isFinite(semanas) || semanas <= 0) {
+      if (!Number.isFinite(cuotas) || cuotas <= 0) {
         return {
           status: 400,
-          body: { success: false, message: 'La solicitud no tiene un plazo_semanas válido' }
+          body: { success: false, message: 'La solicitud no tiene un número de cuotas válido' }
         };
       }
 
-      const { totalPagar, ganancias, pagosSemanales } = calcularMontos(
-        montoSolicitado,
-        tasaInteres,
-        semanas
-      );
-
-      const esSemanal = String(modalidad || '').toUpperCase() === 'SEMANAL';
-      const fechaPrimerVencimientoSemanal = esSemanal
-        ? resolveWeeklyFirstDueDate({
-            fechaInicio,
-            fechaAprobacion,
-            fechaPrimerPago: fecha_primer_pago,
-            fechaPrimerVencimiento: fecha_primer_vencimiento
-          })
-        : null;
-      const fechaVencimiento = esSemanal
-        ? calcularFechaVencimiento(fechaPrimerVencimientoSemanal, semanas - 1)
-        : calcularFechaVencimiento(fechaInicio, semanas);
+      const financial = calculateFlatLoanPricing({
+        montoOriginal: montoSolicitado,
+        interesPorcentaje: tasaInteres,
+        modalidad,
+        numeroCuotas: cuotas,
+        fechaInicio,
+        fechaAprobacion,
+        fechaPrimerPago: fecha_primer_pago,
+        fechaPrimerVencimiento: fecha_primer_vencimiento
+      });
 
       await solicitud.update({
         estado: 'APROBADO',
@@ -833,22 +884,28 @@ router.post(
         solicitud_id: solicitud.id,
         fecha_inicio: fechaInicio,
         fecha_aprobacion: fechaAprobacion,
+        fecha_fin: financial.fecha_fin,
         mes: fechaInicio.toLocaleString('es-ES', { month: 'long' }),
         anio: fechaInicio.getFullYear().toString(),
         nombre_completo: `${cliente.nombre} ${cliente.apellido}`,
+        monto_original: financial.monto_original,
         monto_solicitado: montoSolicitado,
+        interes_porcentaje: financial.interes_porcentaje,
         interes: tasaInteres,
-        modalidad,
-        num_semanas: semanas,
+        interes_total: financial.interes_total,
+        modalidad: financial.modalidad,
+        numero_cuotas: financial.numero_cuotas,
+        num_semanas: financial.numero_cuotas,
         num_dias: parseInt(num_dias, 10) || 0,
-        fecha_vencimiento: fechaVencimiento,
-        total_pagar: totalPagar,
-        ganancias,
-        pagos_semanales: pagosSemanales,
+        fecha_vencimiento: financial.fecha_fin,
+        total_pagar: financial.total_pagar,
+        valor_cuota: financial.valor_cuota,
+        ganancias: financial.interes_total,
+        pagos_semanales: financial.valor_cuota,
         pagos_hechos: 0,
-        pagos_pendientes: semanas,
+        pagos_pendientes: financial.numero_cuotas,
         pagado: 0,
-        pendiente: totalPagar,
+        pendiente: financial.total_pagar,
         status: 'ACTIVO',
         ganancia_diaria: 0,
         reserva: 0,
@@ -857,19 +914,14 @@ router.post(
         caso_especial: null,
         oferta: 0,
         proyeccion_mes: null,
-        anio_vencimiento: fechaVencimiento,
+        anio_vencimiento: financial.fecha_fin,
         contrato: contratoRutaRelativa || null
       }, { transaction });
 
-      const planCuotas = generarPlanCuotasSemanales({
-        prestamoId: prestamo.id,
-        fechaInicio,
-        fechaPrimerVencimiento: fechaPrimerVencimientoSemanal,
-        fechaPrimerPago: fecha_primer_pago,
-        numSemanas: semanas,
-        montoSolicitado,
-        totalPagar
-      });
+      const planCuotas = financial.cronograma.map((cuota) => ({
+        ...cuota,
+        prestamo_id: prestamo.id
+      }));
 
       const cuotasExistentes = await Cuota.count({
         where: { prestamo_id: prestamo.id },
@@ -886,7 +938,7 @@ router.post(
       const montoReferidoCliente = parseFloat(cliente.monto_referido || 0);
       const descuentosDisponibles = parseInt(cliente.descuentos_referido_disponibles, 10) || 0;
       if (montoReferidoCliente > 0 && descuentosDisponibles > 0) {
-        descuentoReferidoAplicado = parseFloat(Math.min(montoReferidoCliente, totalPagar).toFixed(2));
+        descuentoReferidoAplicado = parseFloat(Math.min(montoReferidoCliente, financial.total_pagar).toFixed(2));
 
         const ultimaCuota = await Cuota.findOne({
           where: { prestamo_id: prestamo.id },
@@ -901,9 +953,13 @@ router.post(
           const interesReducido = Math.min(interesUltimaCuota, descuentoReferidoAplicado);
           const capitalReducido = round2(descuentoReferidoAplicado - interesReducido);
 
+          ultimaCuota.capital_programado = round2(Math.max(round2(ultimaCuota.capital_programado || ultimaCuota.monto_capital || 0) - capitalReducido, 0));
+          ultimaCuota.interes_programado = round2(Math.max(round2(ultimaCuota.interes_programado || ultimaCuota.monto_interes || 0) - interesReducido, 0));
+          ultimaCuota.total_programado = round2(Math.max(round2(ultimaCuota.total_programado || ultimaCuota.monto_total || 0) - descuentoReferidoAplicado, 0));
           ultimaCuota.monto_interes = round2(Math.max(interesUltimaCuota - interesReducido, 0));
           ultimaCuota.monto_capital = round2(Math.max(round2(ultimaCuota.monto_capital || 0) - capitalReducido, 0));
           ultimaCuota.monto_total = round2(ultimaCuota.monto_capital + ultimaCuota.monto_interes);
+          ultimaCuota.saldo_restante = round2(Math.max(ultimaCuota.monto_total - round2(ultimaCuota.monto_pagado || 0), 0));
           ultimaCuota.observaciones = ultimaCuota.observaciones
             ? `${ultimaCuota.observaciones}\nDescuento referido aplicado: -${descuentoReferidoAplicado.toFixed(2)} USD`
             : `Descuento referido aplicado: -${descuentoReferidoAplicado.toFixed(2)} USD`;
@@ -916,13 +972,15 @@ router.post(
         }, { transaction });
       }
 
-      const totalPagarNeto = round2(totalPagar - descuentoReferidoAplicado);
-      const gananciasNetas = round2(ganancias - descuentoReferidoAplicado);
+      const totalPagarNeto = round2(financial.total_pagar - descuentoReferidoAplicado);
+      const gananciasNetas = round2(financial.interes_total - descuentoReferidoAplicado);
 
       await prestamo.update({
         total_pagar: totalPagarNeto,
         ganancias: gananciasNetas,
-        pendiente: totalPagarNeto
+        pendiente: totalPagarNeto,
+        interes_total: gananciasNetas,
+        valor_cuota: round2(totalPagarNeto / financial.numero_cuotas)
       }, { transaction });
 
       const contrato = await SolicitudDocumento.create({
@@ -947,9 +1005,9 @@ router.post(
             prestamo,
             cuotas_generadas: cuotasGeneradas,
             descuento_referido_aplicado: descuentoReferidoAplicado,
-            total_pagar_bruto: totalPagar,
+            total_pagar_bruto: financial.total_pagar,
             total_pagar_neto: totalPagarNeto,
-            pagos_semanales_bruto: pagosSemanales,
+            pagos_semanales_bruto: financial.valor_cuota,
             contrato_credito_id: contrato.id,
             contrato: {
               id: contrato.id,
@@ -1187,6 +1245,8 @@ router.post('/:id/pago-semanal', authenticateToken, requirePermission('prestamos
         cuotasConSaldo: 0,
         hayMora: false
       });
+      const hoy = new Date();
+      hoy.setHours(0, 0, 0, 0);
 
       const pagadoTotal = resultadoAplicacion.pagadoTotal;
       const pendienteTotal = resultadoAplicacion.saldoPendienteTotal;

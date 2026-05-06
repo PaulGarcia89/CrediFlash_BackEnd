@@ -14,6 +14,10 @@ const {
 const {
   resolveWeeklyFirstDueDate
 } = require('../utils/cuotaSchedule');
+const {
+  calculateFlatLoanPricing,
+  resolveNumeroCuotas
+} = require('../services/financial/loanPricingService');
 
 // Importar middleware desde auth
 const { authenticateToken, requirePermission } = require('../middleware/auth');
@@ -371,47 +375,68 @@ async function aprobarSolicitudYCrearPrestamo(solicitudId, analistaId) {
       };
     }
     
-    // 5. Calcular montos
-    const montoTotal = calcularMontoTotal(
-      solicitud.monto_solicitado,
-      solicitud.tasa_variable * 100,
-      solicitud.plazo_semanas
-    );
-    
-    // 6. Crear préstamo
-    console.log(`💰 Creando préstamo con monto total: ${montoTotal}`);
     const fechaInicioPrestamo = new Date();
-    const fechaPrimerVencimiento =
-      String(solicitud.modalidad || '').toUpperCase() === 'SEMANAL'
-        ? resolveWeeklyFirstDueDate({
-            fechaInicio: fechaInicioPrestamo,
-            fechaAprobacion: fechaInicioPrestamo
-          })
-        : null;
+    const modalidadPrestamo = solicitud.modalidad || 'SEMANAL';
+    const numeroCuotas = resolveNumeroCuotas({
+      numeroCuotas: solicitud.numero_cuotas,
+      plazoSemanas: solicitud.plazo_semanas,
+      modalidad: modalidadPrestamo
+    });
+
+    if (!numeroCuotas || numeroCuotas <= 0) {
+      throw new Error('La solicitud no tiene un número de cuotas válido');
+    }
+
+    const financial = calculateFlatLoanPricing({
+      montoOriginal: parseFloat(solicitud.monto_solicitado),
+      interesPorcentaje: parseFloat(solicitud.tasa_variable * 100),
+      modalidad: modalidadPrestamo,
+      numeroCuotas,
+      fechaInicio: fechaInicioPrestamo,
+      fechaAprobacion: fechaInicioPrestamo
+    });
+
+    // 6. Crear préstamo
+    console.log(`💰 Creando préstamo con monto total: ${financial.total_pagar}`);
 
     const prestamo = await Prestamo.create({
       solicitud_id: solicitudId,
       fecha_inicio: fechaInicioPrestamo,
-      monto_solicitado: parseFloat(solicitud.monto_solicitado),
-      interes: parseFloat(solicitud.tasa_variable * 100),
-      total_pagar: montoTotal,
-      pendiente: montoTotal,
+      fecha_fin: financial.fecha_fin,
+      monto_original: financial.monto_original,
+      monto_solicitado: financial.monto_original,
+      interes_porcentaje: financial.interes_porcentaje,
+      interes: financial.interes_porcentaje,
+      interes_total: financial.interes_total,
+      total_pagar: financial.total_pagar,
+      pendiente: financial.total_pagar,
       status: 'ACTIVO',
       nombre_completo: `${solicitud.cliente.nombre} ${solicitud.cliente.apellido}`,
       mes: fechaInicioPrestamo.toLocaleString('es-ES', { month: 'long' }),
       anio: fechaInicioPrestamo.getFullYear().toString(),
-      modalidad: solicitud.modalidad || 'SEMANAL',
-      num_semanas: parseInt(solicitud.plazo_semanas),
-      fecha_vencimiento: fechaPrimerVencimiento
-        ? calcularFechaVencimientoSemanal(fechaPrimerVencimiento, solicitud.plazo_semanas)
-        : calcularFechaVencimiento(solicitud.plazo_semanas, fechaInicioPrestamo)
+      modalidad: financial.modalidad,
+      numero_cuotas: financial.numero_cuotas,
+      num_semanas: financial.numero_cuotas,
+      valor_cuota: financial.valor_cuota,
+      pagos_semanales: financial.valor_cuota,
+      fecha_vencimiento: financial.fecha_fin
     });
+
+    const cronograma = financial.cronograma.map((cuota) => ({
+      ...cuota,
+      prestamo_id: prestamo.id
+    }));
+
+    if (cronograma.length > 0) {
+      await Cuota.bulkCreate(cronograma);
+    }
     
     console.log(`🎉 Préstamo creado: ${prestamo.id}`);
     
     return {
       solicitud: solicitudActualizada,
       prestamo,
+      cronograma,
       mensaje: 'Solicitud aprobada y préstamo creado exitosamente'
     };
     

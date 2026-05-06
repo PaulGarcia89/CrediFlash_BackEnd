@@ -438,9 +438,14 @@ const cuotaController = {
       // Generar cuotas
       const datosPrestamo = {
         monto_total: parseFloat(monto_total),
+        monto_original: parseFloat(req.body.monto_original || req.body.monto_solicitado || monto_total),
         plazo_meses: parseInt(plazo_meses),
+        numero_cuotas: parseInt(req.body.numero_cuotas || req.body.num_semanas || plazo_meses, 10),
         fecha_inicio: new Date(fecha_inicio),
-        tasa_interes: tasa_interes || 12
+        fecha_aprobacion: req.body.fecha_aprobacion ? new Date(req.body.fecha_aprobacion) : null,
+        tasa_interes: tasa_interes || 12,
+        interes_porcentaje: req.body.interes_porcentaje || req.body.interes || tasa_interes || 12,
+        modalidad: req.body.modalidad || 'MENSUAL'
       };
       
       const cuotasGeneradas = await Cuota.generarCuotasParaPrestamo(
@@ -455,7 +460,7 @@ const cuotaController = {
         resumen: {
           monto_total: datosPrestamo.monto_total,
           plazo_meses: datosPrestamo.plazo_meses,
-          monto_cuota: parseFloat((datosPrestamo.monto_total / datosPrestamo.plazo_meses).toFixed(2))
+          monto_cuota: cuotasGeneradas[0]?.monto_total || parseFloat((datosPrestamo.monto_total / datosPrestamo.plazo_meses).toFixed(2))
         }
       });
     } catch (error) {
@@ -956,9 +961,15 @@ const cuotaController = {
 
       const datosPrestamo = {
         monto_total: parseFloat(prestamo.total_pagar),
-        num_semanas: parseInt(prestamo.num_semanas),
+        monto_original: parseFloat(prestamo.monto_original || prestamo.monto_solicitado || prestamo.total_pagar),
+        num_semanas: parseInt(prestamo.numero_cuotas || prestamo.num_semanas),
+        numero_cuotas: parseInt(prestamo.numero_cuotas || prestamo.num_semanas),
         fecha_inicio: new Date(prestamo.fecha_inicio),
-        fecha_aprobacion: prestamo.fecha_aprobacion ? new Date(prestamo.fecha_aprobacion) : null
+        fecha_aprobacion: prestamo.fecha_aprobacion ? new Date(prestamo.fecha_aprobacion) : null,
+        interes_porcentaje: parseFloat(prestamo.interes_porcentaje || prestamo.interes || 0),
+        modalidad: prestamo.modalidad || 'SEMANAL',
+        fecha_primer_vencimiento: prestamo.fecha_primer_vencimiento || null,
+        fecha_primer_pago: prestamo.fecha_primer_pago || null
       };
 
       const cuotasGeneradas = await Cuota.generarCuotasSemanalesParaPrestamo(
@@ -973,7 +984,7 @@ const cuotaController = {
         resumen: {
           monto_total: datosPrestamo.monto_total,
           num_semanas: datosPrestamo.num_semanas,
-          monto_cuota: parseFloat((datosPrestamo.monto_total / datosPrestamo.num_semanas).toFixed(2))
+          monto_cuota: cuotasGeneradas[0]?.monto_total || parseFloat((datosPrestamo.monto_total / datosPrestamo.num_semanas).toFixed(2))
         }
       });
     } catch (error) {
@@ -1016,9 +1027,15 @@ const cuotaController = {
 
           const datosPrestamo = {
             monto_total: parseFloat(prestamo.total_pagar),
-            num_semanas: parseInt(prestamo.num_semanas),
+            monto_original: parseFloat(prestamo.monto_original || prestamo.monto_solicitado || prestamo.total_pagar),
+            num_semanas: parseInt(prestamo.numero_cuotas || prestamo.num_semanas),
+            numero_cuotas: parseInt(prestamo.numero_cuotas || prestamo.num_semanas),
             fecha_inicio: new Date(prestamo.fecha_inicio),
-            fecha_aprobacion: prestamo.fecha_aprobacion ? new Date(prestamo.fecha_aprobacion) : null
+            fecha_aprobacion: prestamo.fecha_aprobacion ? new Date(prestamo.fecha_aprobacion) : null,
+            interes_porcentaje: parseFloat(prestamo.interes_porcentaje || prestamo.interes || 0),
+            modalidad: prestamo.modalidad || 'SEMANAL',
+            fecha_primer_vencimiento: prestamo.fecha_primer_vencimiento || null,
+            fecha_primer_pago: prestamo.fecha_primer_pago || null
           };
 
           const cuotasGeneradas = await Cuota.generarCuotasSemanalesParaPrestamo(

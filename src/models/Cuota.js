@@ -2,8 +2,13 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 const {
-  buildWeeklyDueDates
-} = require('../utils/cuotaSchedule');
+  buildInstallmentDates,
+  round2
+} = require('../services/financial/scheduleService');
+const {
+  calculateFlatLoanPricing,
+  resolveNumeroCuotas
+} = require('../services/financial/loanPricingService');
 
 const Cuota = sequelize.define('Cuota', {
   id: {
@@ -15,9 +20,29 @@ const Cuota = sequelize.define('Cuota', {
     type: DataTypes.UUID,
     allowNull: false
   },
+  numero_cuota: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    defaultValue: null
+  },
   fecha_vencimiento: {
     type: DataTypes.DATEONLY, // DATE para PostgreSQL
     allowNull: false
+  },
+  capital_programado: {
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: true,
+    defaultValue: null
+  },
+  interes_programado: {
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: true,
+    defaultValue: null
+  },
+  total_programado: {
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: true,
+    defaultValue: null
   },
   monto_capital: {
     type: DataTypes.DECIMAL(15, 2),
@@ -46,6 +71,26 @@ const Cuota = sequelize.define('Cuota', {
   monto_pagado: {
     type: DataTypes.DECIMAL(15, 2),
     allowNull: true,
+    defaultValue: 0
+  },
+  capital_pagado: {
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: false,
+    defaultValue: 0
+  },
+  interes_pagado: {
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: false,
+    defaultValue: 0
+  },
+  mora_pagada: {
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: false,
+    defaultValue: 0
+  },
+  saldo_restante: {
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: false,
     defaultValue: 0
   },
   monto_fee_acumulado: {
@@ -80,12 +125,20 @@ const Cuota = sequelize.define('Cuota', {
   underscored: true, // Para mapear snake_case
   hooks: {
     beforeCreate: (cuota) => {
-      // Calcular monto_total si no se proporciona
-      if (!cuota.monto_total) {
-        cuota.monto_total = parseFloat(
-          (parseFloat(cuota.monto_capital) + parseFloat(cuota.monto_interes)).toFixed(2)
-        );
-      }
+      const capitalProgramado = round2(cuota.capital_programado ?? cuota.monto_capital);
+      const interesProgramado = round2(cuota.interes_programado ?? cuota.monto_interes);
+      const totalProgramado = round2(cuota.total_programado ?? cuota.monto_total ?? capitalProgramado + interesProgramado);
+
+      cuota.capital_programado = capitalProgramado;
+      cuota.interes_programado = interesProgramado;
+      cuota.total_programado = totalProgramado;
+      cuota.monto_capital = capitalProgramado;
+      cuota.monto_interes = interesProgramado;
+      cuota.monto_total = totalProgramado;
+      cuota.capital_pagado = round2(cuota.capital_pagado);
+      cuota.interes_pagado = round2(cuota.interes_pagado);
+      cuota.mora_pagada = round2(cuota.mora_pagada);
+      cuota.saldo_restante = round2(Math.max(totalProgramado - round2(cuota.monto_pagado), 0));
     },
     beforeUpdate: (cuota) => {
       // Actualizar estado basado en pagos
@@ -98,6 +151,8 @@ const Cuota = sequelize.define('Cuota', {
         // Mantener compatibilidad con constraints de BD que no aceptan PARCIAL
         cuota.estado = 'PENDIENTE';
       }
+
+      cuota.saldo_restante = round2(Math.max(round2(cuota.monto_total) - round2(cuota.monto_pagado), 0));
     }
   }
 });
@@ -109,6 +164,9 @@ Cuota.prototype.marcarComoPagada = async function(montoPagado, observaciones = n
   try {
     const pagoAcumulado = parseFloat(this.monto_pagado || 0) + parseFloat(montoPagado);
     this.monto_pagado = parseFloat(pagoAcumulado.toFixed(2));
+    this.capital_pagado = parseFloat(Math.min(parseFloat(this.capital_pagado || 0) + parseFloat(montoPagado), parseFloat(this.capital_programado || this.monto_capital || 0)).toFixed(2));
+    this.interes_pagado = parseFloat(Math.min(parseFloat(this.interes_pagado || 0), parseFloat(this.interes_programado || this.monto_interes || 0)).toFixed(2));
+    this.saldo_restante = parseFloat(Math.max(parseFloat(this.monto_total || 0) - this.monto_pagado, 0).toFixed(2));
     this.fecha_pago = new Date();
     
     // Actualizar observaciones
@@ -133,6 +191,7 @@ Cuota.prototype.marcarComoPagada = async function(montoPagado, observaciones = n
       datos: {
         nuevo_estado: this.estado,
         saldo_pendiente: parseFloat((this.monto_total - this.monto_pagado).toFixed(2)),
+        saldo_restante: this.saldo_restante,
         fecha_pago: this.fecha_pago
       }
     };
@@ -188,30 +247,88 @@ Cuota.prototype.calcularDiasMora = function() {
 // Generar cuotas para un préstamo
 Cuota.generarCuotasParaPrestamo = async function(prestamoId, datosPrestamo) {
   try {
-    const { monto_total, plazo_meses, fecha_inicio, tasa_interes } = datosPrestamo;
-    
+    const {
+      monto_total,
+      monto_original,
+      monto_solicitado,
+      plazo_meses,
+      numero_cuotas,
+      fecha_inicio,
+      fecha_aprobacion,
+      tasa_interes,
+      interes_porcentaje,
+      modalidad = 'MENSUAL'
+    } = datosPrestamo;
+
     const cuotas = [];
-    const montoCuota = parseFloat((monto_total / plazo_meses).toFixed(2));
-    const montoCapitalCuota = parseFloat((montoCuota * 0.85).toFixed(2)); // 85% capital
-    const montoInteresCuota = parseFloat((montoCuota * 0.15).toFixed(2)); // 15% interés
-    
-    let fechaVencimiento = new Date(fecha_inicio);
-    
-    for (let i = 1; i <= plazo_meses; i++) {
-      fechaVencimiento.setMonth(fechaVencimiento.getMonth() + 1);
-      
-      cuotas.push({
-        prestamo_id: prestamoId,
-        fecha_vencimiento: new Date(fechaVencimiento),
-        monto_capital: montoCapitalCuota,
-        monto_interes: montoInteresCuota,
-        monto_total: montoCuota,
-        monto_pagado: 0,
-        estado: 'PENDIENTE',
-        observaciones: `Cuota ${i} de ${plazo_meses}`
+    const principal = Number(monto_original ?? monto_solicitado ?? monto_total);
+    const tasa = Number(interes_porcentaje ?? tasa_interes);
+    const totalCuotas = resolveNumeroCuotas({
+      numeroCuotas: numero_cuotas,
+      plazoSemanas: plazo_meses,
+      modalidad
+    });
+
+    if (Number.isFinite(principal) && principal > 0 && Number.isFinite(tasa) && totalCuotas > 0) {
+      const financial = calculateFlatLoanPricing({
+        montoOriginal: principal,
+        interesPorcentaje: tasa,
+        modalidad,
+        numeroCuotas: totalCuotas,
+        fechaInicio: fecha_inicio,
+        fechaAprobacion
       });
+
+      financial.cronograma.forEach((cuota) => {
+        cuotas.push({
+          prestamo_id: prestamoId,
+          ...cuota
+        });
+      });
+    } else {
+      const scheduleDates = buildInstallmentDates({
+        modalidad,
+        numeroCuotas: totalCuotas,
+        fechaInicio: fecha_inicio,
+        fechaAprobacion
+      });
+      const montoBase = totalCuotas > 0 ? round2(Number(monto_total || 0) / totalCuotas) : round2(monto_total || 0);
+      const capitalBase = totalCuotas > 0 ? round2(montoBase * 0.85) : round2(monto_total || 0);
+      const interesBase = totalCuotas > 0 ? round2(montoBase - capitalBase) : 0;
+
+      for (let i = 1; i <= totalCuotas; i += 1) {
+        const esUltima = i === totalCuotas;
+        const montoCuota = esUltima
+          ? round2(Number(monto_total || 0) - round2(montoBase * (totalCuotas - 1)))
+          : montoBase;
+        const montoCapitalCuota = esUltima
+          ? round2(Number(monto_total || 0) * 0.85 - round2(capitalBase * (totalCuotas - 1)))
+          : capitalBase;
+        const montoInteresCuota = esUltima
+          ? round2(montoCuota - montoCapitalCuota)
+          : interesBase;
+
+        cuotas.push({
+          prestamo_id: prestamoId,
+          numero_cuota: i,
+          fecha_vencimiento: scheduleDates[i - 1],
+          capital_programado: montoCapitalCuota,
+          interes_programado: montoInteresCuota,
+          total_programado: montoCuota,
+          monto_capital: montoCapitalCuota,
+          monto_interes: montoInteresCuota,
+          monto_total: montoCuota,
+          monto_pagado: 0,
+          capital_pagado: 0,
+          interes_pagado: 0,
+          mora_pagada: 0,
+          saldo_restante: montoCuota,
+          estado: 'PENDIENTE',
+          observaciones: `Cuota ${i} de ${totalCuotas}`
+        });
+      }
     }
-    
+
     const cuotasCreadas = await Cuota.bulkCreate(cuotas);
     
     console.log(`✅ Generadas ${cuotasCreadas.length} cuotas para préstamo ${prestamoId}`);
@@ -228,44 +345,87 @@ Cuota.generarCuotasSemanalesParaPrestamo = async function(prestamoId, datosPrest
   try {
     const {
       monto_total,
+      monto_original,
+      monto_solicitado,
       num_semanas,
+      numero_cuotas,
       fecha_inicio,
       fecha_aprobacion,
       fecha_primer_pago,
-      fecha_primer_vencimiento
+      fecha_primer_vencimiento,
+      modalidad = 'SEMANAL',
+      interes_porcentaje,
+      tasa_interes
     } = datosPrestamo;
-    const semanas = parseInt(num_semanas) || 0;
+    const principal = Number(monto_original ?? monto_solicitado ?? monto_total);
+    const tasa = Number(interes_porcentaje ?? tasa_interes);
+    const semanas = resolveNumeroCuotas({
+      numeroCuotas: numero_cuotas,
+      plazoSemanas: num_semanas,
+      modalidad
+    });
 
     if (!semanas || semanas <= 0) {
       throw new Error('num_semanas inválido para generar cuotas semanales');
     }
 
     const cuotas = [];
-    const montoCuota = parseFloat((monto_total / semanas).toFixed(2));
-    const montoCapitalCuota = parseFloat((montoCuota * 0.85).toFixed(2));
-    const montoInteresCuota = parseFloat((montoCuota * 0.15).toFixed(2));
+    const financial = Number.isFinite(principal) && principal > 0 && Number.isFinite(tasa)
+      ? calculateFlatLoanPricing({
+          montoOriginal: principal,
+          interesPorcentaje: tasa,
+          modalidad,
+          numeroCuotas: semanas,
+          fechaInicio: fecha_inicio,
+          fechaAprobacion: fecha_aprobacion,
+          fechaPrimerPago: fecha_primer_pago,
+          fechaPrimerVencimiento: fecha_primer_vencimiento
+        })
+      : null;
 
-    const fechasVencimiento = buildWeeklyDueDates({
-      numSemanas: semanas,
-      fechaInicio: fecha_inicio,
-      fechaAprobacion: fecha_aprobacion,
-      fechaPrimerPago: fecha_primer_pago,
-      fechaPrimerVencimiento: fecha_primer_vencimiento
-    });
-
-    for (let i = 1; i <= semanas; i++) {
-      const fechaVencimiento = fechasVencimiento[i - 1];
-
-      cuotas.push({
-        prestamo_id: prestamoId,
-        fecha_vencimiento: fechaVencimiento,
-        monto_capital: montoCapitalCuota,
-        monto_interes: montoInteresCuota,
-        monto_total: montoCuota,
-        monto_pagado: 0,
-        estado: 'PENDIENTE',
-        observaciones: `Cuota ${i} de ${semanas}`
+    if (financial) {
+      financial.cronograma.forEach((cuota) => {
+        cuotas.push({
+          prestamo_id: prestamoId,
+          ...cuota
+        });
       });
+    } else {
+      const montoCuota = round2(monto_total / semanas);
+      const montoCapitalCuota = round2(montoCuota * 0.85);
+      const montoInteresCuota = round2(montoCuota - montoCapitalCuota);
+
+      const fechasVencimiento = buildInstallmentDates({
+        modalidad,
+        numeroCuotas: semanas,
+        fechaInicio: fecha_inicio,
+        fechaAprobacion: fecha_aprobacion,
+        fechaPrimerPago: fecha_primer_pago,
+        fechaPrimerVencimiento: fecha_primer_vencimiento
+      });
+
+      for (let i = 1; i <= semanas; i++) {
+        const fechaVencimiento = fechasVencimiento[i - 1];
+
+        cuotas.push({
+          prestamo_id: prestamoId,
+          numero_cuota: i,
+          fecha_vencimiento: fechaVencimiento,
+          capital_programado: montoCapitalCuota,
+          interes_programado: montoInteresCuota,
+          total_programado: montoCuota,
+          monto_capital: montoCapitalCuota,
+          monto_interes: montoInteresCuota,
+          monto_total: montoCuota,
+          monto_pagado: 0,
+          capital_pagado: 0,
+          interes_pagado: 0,
+          mora_pagada: 0,
+          saldo_restante: montoCuota,
+          estado: 'PENDIENTE',
+          observaciones: `Cuota ${i} de ${semanas}`
+        });
+      }
     }
 
     const cuotasCreadas = await Cuota.bulkCreate(cuotas);
@@ -333,6 +493,8 @@ Cuota.obtenerResumenCuotas = async function(prestamoId) {
       }).length,
       monto_total: parseFloat(cuotas.reduce((sum, c) => sum + parseFloat(c.monto_total || 0), 0).toFixed(2)),
       monto_pagado: parseFloat(cuotas.reduce((sum, c) => sum + parseFloat(c.monto_pagado || 0), 0).toFixed(2)),
+      capital_programado: parseFloat(cuotas.reduce((sum, c) => sum + parseFloat((c.capital_programado ?? c.monto_capital ?? 0)), 0).toFixed(2)),
+      interes_programado: parseFloat(cuotas.reduce((sum, c) => sum + parseFloat((c.interes_programado ?? c.monto_interes ?? 0)), 0).toFixed(2)),
       monto_pendiente: parseFloat(cuotas.reduce((sum, c) => 
         sum + (parseFloat(c.monto_total || 0) - parseFloat(c.monto_pagado || 0)), 0).toFixed(2))
     };
