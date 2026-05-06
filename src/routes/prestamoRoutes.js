@@ -834,74 +834,99 @@ router.post(
     await ensurePrestamoContratoColumn();
     await ensureClienteReferidosColumns();
 
+    const solicitud = await Solicitud.findByPk(solicitudId);
+    if (!solicitud) {
+      return res.status(404).json({ success: false, message: 'Solicitud no encontrada' });
+    }
+
+    const cliente = await Cliente.findByPk(solicitud.cliente_id);
+    if (!cliente) {
+      return res.status(404).json({ success: false, message: 'Cliente no encontrado para la solicitud' });
+    }
+
+    if (solicitud.estado !== 'PENDIENTE') {
+      return res.status(400).json({
+        success: false,
+        message: 'La solicitud debe estar en estado PENDIENTE'
+      });
+    }
+
+    const prestamoExistente = await Prestamo.findOne({
+      where: { solicitud_id: solicitud.id }
+    });
+
+    if (prestamoExistente) {
+      return res.status(400).json({
+        success: false,
+        message: 'La solicitud ya tiene un préstamo asociado'
+      });
+    }
+
+    const fechaAprobacion = new Date();
+    const fechaInicio = normalizeToNoon(fecha_inicio) || normalizeToNoon(new Date());
+    const montoSolicitado = parseFloat(solicitud.monto_solicitado) || 0;
+    const tasaInteres = resolveInterestPercentageInput({
+      interesPorcentaje: solicitud.interes_porcentaje,
+      tasaVariable: solicitud.tasa_variable,
+      tasaBase: solicitud.tasa_base
+    });
+    const modalidad = solicitud.modalidad || 'SEMANAL';
+    const cuotas = resolveNumeroCuotas({
+      numeroCuotas: solicitud.numero_cuotas,
+      plazoSemanas: solicitud.plazo_semanas,
+      modalidad
+    });
+
+    if (!Number.isFinite(cuotas) || cuotas <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'La solicitud no tiene un número de cuotas válido'
+      });
+    }
+
+    const financial = calculateFlatLoanPricing({
+      montoOriginal: montoSolicitado,
+      interesPorcentaje: tasaInteres,
+      modalidad,
+      numeroCuotas: cuotas,
+      fechaInicio,
+      fechaAprobacion,
+      fechaPrimerPago: fecha_primer_pago,
+      fechaPrimerVencimiento: fecha_primer_vencimiento
+    });
+
     const resultado = await sequelize.transaction(async (transaction) => {
-      const solicitud = await Solicitud.findByPk(solicitudId, {
-        transaction
+      const solicitudTx = await Solicitud.findByPk(solicitud.id, {
+        transaction,
+        lock: transaction.LOCK.UPDATE
       });
 
-      if (!solicitud) {
+      if (!solicitudTx) {
         return { status: 404, body: { success: false, message: 'Solicitud no encontrada' } };
       }
 
-      const cliente = await Cliente.findByPk(solicitud.cliente_id, { transaction });
-      if (!cliente) {
-        return { status: 404, body: { success: false, message: 'Cliente no encontrado para la solicitud' } };
-      }
-
-      if (solicitud.estado !== 'PENDIENTE') {
+      if (solicitudTx.estado !== 'PENDIENTE') {
         return { status: 400, body: { success: false, message: 'La solicitud debe estar en estado PENDIENTE' } };
       }
 
-      const prestamoExistente = await Prestamo.findOne({
-        where: { solicitud_id: solicitud.id },
-        transaction
+      const prestamoExistenteTx = await Prestamo.findOne({
+        where: { solicitud_id: solicitudTx.id },
+        transaction,
+        lock: transaction.LOCK.UPDATE
       });
 
-      if (prestamoExistente) {
+      if (prestamoExistenteTx) {
         return { status: 400, body: { success: false, message: 'La solicitud ya tiene un préstamo asociado' } };
       }
 
-      const fechaAprobacion = new Date();
-      const fechaInicio = normalizeToNoon(fecha_inicio) || normalizeToNoon(new Date());
-      const montoSolicitado = parseFloat(solicitud.monto_solicitado) || 0;
-      const tasaInteres = resolveInterestPercentageInput({
-        interesPorcentaje: solicitud.interes_porcentaje,
-        tasaVariable: solicitud.tasa_variable,
-        tasaBase: solicitud.tasa_base
-      });
-      const modalidad = solicitud.modalidad || 'SEMANAL';
-      const cuotas = resolveNumeroCuotas({
-        numeroCuotas: solicitud.numero_cuotas,
-        plazoSemanas: solicitud.plazo_semanas,
-        modalidad
-      });
-
-      if (!Number.isFinite(cuotas) || cuotas <= 0) {
-        return {
-          status: 400,
-          body: { success: false, message: 'La solicitud no tiene un número de cuotas válido' }
-        };
-      }
-
-      const financial = calculateFlatLoanPricing({
-        montoOriginal: montoSolicitado,
-        interesPorcentaje: tasaInteres,
-        modalidad,
-        numeroCuotas: cuotas,
-        fechaInicio,
-        fechaAprobacion,
-        fechaPrimerPago: fecha_primer_pago,
-        fechaPrimerVencimiento: fecha_primer_vencimiento
-      });
-
-      await solicitud.update({
+      await solicitudTx.update({
         estado: 'APROBADO',
         analista_id: req.user.id,
         fecha_aprobacion: fechaAprobacion
       }, { transaction });
 
       const prestamo = await Prestamo.create({
-        solicitud_id: solicitud.id,
+        solicitud_id: solicitudTx.id,
         fecha_inicio: fechaInicio,
         fecha_aprobacion: fechaAprobacion,
         fecha_fin: financial.fecha_fin,
