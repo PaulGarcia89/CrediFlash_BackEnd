@@ -189,7 +189,7 @@ def safe_status(estatus, pagos_pendientes):
     if txt:
         return txt[:100]
     if pagos_pendientes == 0:
-        return "NO DEBE NADA"
+        return "PAGADO"
     return f"LE QUEDAN {pagos_pendientes} PAGOS POR PAGAR"
 
 def is_checked_cell(value):
@@ -479,7 +479,15 @@ def load_loan_rows(wb):
         else:
             balance = max(Decimal("0.00"), (total - pagado)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
-        estatus = "NO DEBE NADA" if pagos_pend == 0 else f"LE QUEDAN {pagos_pend} PAGOS POR PAGAR"
+        estatus_raw = upper(estatus_col)
+        if estatus_raw == "NO DEBE NADA" or pagos_pend == 0:
+            estatus = "PAGADO"
+            pagos_pend = 0
+            pagos_hechos = semanas
+            pagado = total
+            balance = Decimal("0.00")
+        else:
+            estatus = f"LE QUEDAN {pagos_pend} PAGOS POR PAGAR"
 
         rows.append({
             "excel_row": idx,
