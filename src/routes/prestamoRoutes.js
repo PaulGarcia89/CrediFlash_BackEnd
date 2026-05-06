@@ -518,7 +518,8 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
         model: Cuota,
         as: 'cuotas',
         attributes: ['id', 'monto_total', 'monto_pagado', 'estado', 'fecha_vencimiento'],
-        required: false
+        required: false,
+        separate: true
       }
     ];
 
