@@ -1081,6 +1081,7 @@ router.get('/:clienteId/documentos', authenticateToken, requirePermission('clien
           storage_key: disponibilidad.relativePath,
           exists: disponibilidad.exists,
           archivo_disponible: disponibilidad.exists,
+          estado_documento: disponibilidad.exists ? 'DISPONIBLE' : 'NO_DISPONIBLE',
           url: disponibilidad.exists ? construirUrlDocumento(req, disponibilidad.relativePath) : null,
           url_ver: urlVer,
           download_url: urlDescarga,
@@ -1115,24 +1116,25 @@ router.get('/:clienteId/documentos', authenticateToken, requirePermission('clien
         ? `${baseUrl}/api/clientes/${doc.cliente_id}/documento-identidad/download?disposition=attachment`
         : null;
 
-      return {
-        id: doc.id,
-        cliente_id: doc.cliente_id,
-        solicitud_id: null,
-        nombre: doc.nombre,
-        tipo: 'PDF',
-        categoria: doc.tipo || 'IDENTIDAD',
-        tipo_documento: doc.tipo || 'IDENTIDAD',
-        mime_type: doc.mime_type || 'application/pdf',
-        storage_path: disponibilidad.relativePath,
-        storage_key: disponibilidad.relativePath,
-        exists: disponibilidad.exists,
-        archivo_disponible: disponibilidad.exists,
-        url: disponibilidad.exists ? construirUrlDocumento(req, disponibilidad.relativePath) : null,
-        url_ver: urlDocumentos,
-        download_url: urlDescarga,
-        url_descarga: urlDescarga,
-        delete_url: `${baseUrl}/api/documentos/${doc.id}`,
+        return {
+          id: doc.id,
+          cliente_id: doc.cliente_id,
+          solicitud_id: null,
+          nombre: doc.nombre,
+          tipo: 'PDF',
+          categoria: doc.tipo || 'IDENTIDAD',
+          tipo_documento: doc.tipo || 'IDENTIDAD',
+          mime_type: doc.mime_type || 'application/pdf',
+          storage_path: disponibilidad.relativePath,
+          storage_key: disponibilidad.relativePath,
+          exists: disponibilidad.exists,
+          archivo_disponible: disponibilidad.exists,
+          estado_documento: disponibilidad.exists ? 'DISPONIBLE' : 'NO_DISPONIBLE',
+          url: disponibilidad.exists ? construirUrlDocumento(req, disponibilidad.relativePath) : null,
+          url_ver: urlDocumentos,
+          download_url: urlDescarga,
+          url_descarga: urlDescarga,
+          delete_url: `${baseUrl}/api/documentos/${doc.id}`,
         size_bytes: doc.size_bytes,
         fecha_subida: doc.creado_en
       };
@@ -1143,7 +1145,7 @@ router.get('/:clienteId/documentos', authenticateToken, requirePermission('clien
 
     return res.json({
       success: true,
-      data: documentosDisponibles,
+      data: documentosUnicos,
       meta: {
         total: documentosUnicos.length,
         disponibles: documentosDisponibles.length,
