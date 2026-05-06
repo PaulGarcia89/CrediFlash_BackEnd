@@ -17,6 +17,7 @@ const Permiso = require('./Permiso');
 const RolePermiso = require('./RolePermiso');
 const AnalistaRole = require('./AnalistaRole');
 const { ensureSolicitudOrigenColumns } = require('../utils/solicitudOrigen');
+const { ensureSolicitudFinancialColumns } = require('../utils/solicitudFinancialColumns');
 const { ensurePrestamoAbonoParcialColumns } = require('../utils/prestamoAbonos');
 
 // ========== DEFINIR RELACIONES ==========
@@ -249,6 +250,8 @@ models.inicializarBaseDeDatos = async (opciones = {}) => {
 
     await ensureSolicitudOrigenColumns(sequelize);
     console.log('✅ Columnas de origen de solicitudes verificadas');
+    await ensureSolicitudFinancialColumns(sequelize);
+    console.log('✅ Columnas financieras de solicitudes verificadas');
     await ensurePrestamoAbonoParcialColumns(sequelize);
     console.log('✅ Columna de abono parcial de préstamos verificada');
     

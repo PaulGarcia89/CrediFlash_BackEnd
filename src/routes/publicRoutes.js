@@ -16,6 +16,9 @@ const {
   buildPublicSolicitudOrigin,
   ensureSolicitudOrigenColumns
 } = require('../utils/solicitudOrigen');
+const {
+  ensureSolicitudFinancialColumns
+} = require('../utils/solicitudFinancialColumns');
 const { normalizarModalidad, MODALIDADES_PERMITIDAS } = require('../utils/tasaModalidad');
 const { sendOtpVerificationEmail } = require('../utils/emailVerificationService');
 const {
@@ -481,6 +484,7 @@ router.post('/solicitudes', uploadPublicSolicitudDocumentos, async (req, res) =>
 
     await ensureOrigenColumns();
     await ensureSolicitudDocumentoTipoColumn();
+    await ensureSolicitudFinancialColumns(sequelize);
 
     const {
       cliente_id,

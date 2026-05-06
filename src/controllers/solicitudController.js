@@ -4,6 +4,9 @@ const {
   calculateFlatLoanPricing,
   resolveInterestPercentageInput
 } = require('../services/financial/loanPricingService');
+const {
+  ensureSolicitudFinancialColumns
+} = require('../utils/solicitudFinancialColumns');
 
 class SolicitudController {
   constructor(models) {
@@ -12,12 +15,14 @@ class SolicitudController {
     this.Analista = models.Analista;
     this.ModeloAprobacion = models.ModeloAprobacion;
     this.Prestamo = models.Prestamo;
+    this.sequelize = models.sequelize;
   }
 
   // Crear solicitud
   async crearSolicitud(req, res) {
     try {
       console.log('📝 Recibiendo solicitud:', req.body);
+      await ensureSolicitudFinancialColumns(this.sequelize);
       
       const { cliente_id, monto_solicitado, plazo_semanas, tasa_variable, tasa_base, interes_porcentaje, modelo_aprobacion_id, modelo_calificacion, destino } = req.body;
       
@@ -141,6 +146,7 @@ class SolicitudController {
   // Obtener todas las solicitudes
   async obtenerSolicitudes(req, res) {
     try {
+      await ensureSolicitudFinancialColumns(this.sequelize);
       const { estado, cliente_id, analista_id, page = 1, limit = 10 } = req.query;
 
       const where = {};
@@ -217,6 +223,7 @@ class SolicitudController {
   // Obtener solicitud por ID
   async obtenerSolicitudPorId(req, res) {
     try {
+      await ensureSolicitudFinancialColumns(this.sequelize);
       const { id } = req.params;
 
       const solicitud = await this.Solicitud.findByPk(id, {
@@ -281,6 +288,7 @@ class SolicitudController {
   // Aprobar solicitud
   async aprobarSolicitud(req, res) {
     try {
+      await ensureSolicitudFinancialColumns(this.sequelize);
       const { id } = req.params;
       const { analista_id } = req.body;
 
@@ -366,6 +374,7 @@ class SolicitudController {
   async actualizarSolicitud(req, res) {
     try {
       const { id } = req.params;
+      await ensureSolicitudFinancialColumns(this.sequelize);
       const { monto_solicitado, plazo_semanas, tasa_variable, modelo_aprobacion_id, modelo_calificacion, destino } = req.body;
 
       const solicitud = await this.Solicitud.findByPk(id);

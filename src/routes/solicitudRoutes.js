@@ -12,6 +12,9 @@ const {
   ensureSolicitudOrigenColumns
 } = require('../utils/solicitudOrigen');
 const {
+  ensureSolicitudFinancialColumns
+} = require('../utils/solicitudFinancialColumns');
+const {
   resolveWeeklyFirstDueDate
 } = require('../utils/cuotaSchedule');
 const {
@@ -454,6 +457,7 @@ router.post(
   try {
     console.log('📥 SOLICITUD RECIBIDA:', req.body);
     await ensureSolicitudOrigenColumns(sequelize);
+    await ensureSolicitudFinancialColumns(sequelize);
     
     const {
       cliente_id,
@@ -735,6 +739,7 @@ router.get('/', authenticateToken, requirePermission('solicitudes.view'), async 
     } = req.query;
     
     await ensureSolicitudOrigenColumns(sequelize);
+    await ensureSolicitudFinancialColumns(sequelize);
     
     const offset = (parseInt(page) - 1) * parseInt(limit);
     
@@ -886,6 +891,7 @@ router.get('/:id', authenticateToken, requirePermission('solicitudes.view'), asy
   try {
     await ensureSolicitudDocumentoTipoColumn();
     await ensureSolicitudOrigenColumns(sequelize);
+    await ensureSolicitudFinancialColumns(sequelize);
     const solicitud = await Solicitud.findByPk(req.params.id, {
       include: [
         { 
@@ -958,6 +964,8 @@ router.get('/:id', authenticateToken, requirePermission('solicitudes.view'), asy
 // PUT /api/solicitudes/:id - Actualizar solicitud (recalcula tasa por modalidad)
 router.put('/:id', authenticateToken, requirePermission('solicitudes.create'), async (req, res) => {
   try {
+    await ensureSolicitudOrigenColumns(sequelize);
+    await ensureSolicitudFinancialColumns(sequelize);
     const solicitud = await Solicitud.findByPk(req.params.id);
     if (!solicitud) {
       return res.status(404).json({
