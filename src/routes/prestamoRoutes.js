@@ -77,7 +77,9 @@ const normalizeOperationalStatus = (prestamo = {}) => {
 
   if (rawStatus.includes('LE QUEDAN')) return 'EN_MARCHA';
   if (['NO DEBE NADA', 'PAGADO', 'CANCELADO'].includes(rawStatus)) return 'PAGADO';
-  if (['ACTIVO', 'EN_PROCESO', 'EN_MARCHA', 'MOROSO'].includes(rawStatus)) return rawStatus;
+  if (['ACTIVO', 'EN_PROCESO', 'EN_MARCHA', 'MOROSO'].includes(rawStatus)) {
+    return rawStatus === 'MOROSO' ? 'MOROSO' : 'EN_MARCHA';
+  }
 
   if (cuotasRestantes > 0 || pendiente > 0) return 'EN_MARCHA';
   return 'PAGADO';
@@ -459,6 +461,13 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
             { pagos_pendientes: { [Op.gt]: 0 } },
             { pendiente: { [Op.gt]: 0 } }
           ];
+        } else if (statusNormalizado === 'EN_MARCHA') {
+          where[Op.or] = [
+            { status: { [Op.in]: ['ACTIVO', 'EN_PROCESO', 'EN_MARCHA'] } },
+            { status: { [Op.iLike]: 'LE QUEDAN %PAGOS POR PAGAR' } },
+            { pagos_pendientes: { [Op.gt]: 0 } },
+            { pendiente: { [Op.gt]: 0 } }
+          ];
         } else if (statusNormalizado === 'PAGADO') {
           where[Op.or] = [
             { status: { [Op.in]: ['PAGADO', 'NO DEBE NADA', 'CANCELADO'] } },
@@ -762,7 +771,7 @@ router.post('/', authenticateToken, requirePermission('prestamos.create'), async
       pagos_pendientes: financial.numero_cuotas,
       pagos_hechos: 0,
       pagado: 0,
-      status: 'ACTIVO',
+      status: 'EN_MARCHA',
       anio_vencimiento: financial.fecha_fin
     });
 
@@ -964,7 +973,7 @@ router.post(
         pagos_pendientes: financial.numero_cuotas,
         pagado: 0,
         pendiente: financial.total_pagar,
-        status: 'ACTIVO',
+        status: 'EN_MARCHA',
         ganancia_diaria: 0,
         reserva: 0,
         refinanciado: 0,

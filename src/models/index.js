@@ -1,4 +1,5 @@
 const sequelize = require('../config/database');
+const { Op } = require('sequelize');
 const { ensureAccessControlSeed } = require('../utils/accessControlSeed');
 
 // ========== IMPORTAR TODOS LOS MODELOS ==========
@@ -373,7 +374,7 @@ models.obtenerEstadisticas = async () => {
       Prestamo.count(),
       Cuota.count(),
       Solicitud.count({ where: { estado: 'PENDIENTE' } }),
-      Prestamo.count({ where: { status: 'ACTIVO' } }),
+      Prestamo.count({ where: { status: { [Op.in]: ['ACTIVO', 'EN_MARCHA'] } } }),
       Cuota.count({ where: { estado: 'VENCIDO' } })
     ]);
     

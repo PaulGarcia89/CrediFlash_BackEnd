@@ -124,7 +124,7 @@ const Prestamo = sequelize.define('Prestamo', {
   },
   status: {
     type: DataTypes.STRING(20),
-    defaultValue: 'ACTIVO'
+    defaultValue: 'EN_MARCHA'
   },
   ganancia_diaria: {
     type: DataTypes.DECIMAL(15, 2),
