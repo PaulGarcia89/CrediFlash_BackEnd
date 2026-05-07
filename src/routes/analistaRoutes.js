@@ -6,7 +6,7 @@ const roleController = require('../controllers/roleController');
 const { authenticateToken, requirePermission } = require('../middleware/auth');
 
 // ========== RUTAS PÚBLICAS ==========
-router.post('/registrar', authenticateToken, requirePermission('analistas.manage'), analistaController.registrarAnalista);
+router.post('/registrar', analistaController.registrarAnalista);
 router.post('/login', analistaController.login);
 
 // ========== RUTAS PROTEGIDAS (requieren token) ==========
