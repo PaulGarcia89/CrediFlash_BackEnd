@@ -30,7 +30,7 @@ test('calcula préstamo semanal con cronograma y separación flat', () => {
   );
 });
 
-test('calcula préstamo quincenal con fechas cada 15 días', () => {
+test('calcula préstamo quincenal con fechas cada 14 días', () => {
   const financial = calculateFlatLoanPricing({
     montoOriginal: 1000,
     interesPorcentaje: 17,
@@ -44,11 +44,11 @@ test('calcula préstamo quincenal con fechas cada 15 días', () => {
   assert.equal(financial.valor_cuota, 585);
   assert.deepEqual(
     financial.cronograma.map((cuota) => formatDateOnly(cuota.fecha_vencimiento)),
-    ['2026-05-21', '2026-06-05']
+    ['2026-05-20', '2026-06-03']
   );
 });
 
-test('calcula préstamo mensual con fechas cada 1 mes', () => {
+test('calcula préstamo mensual con fechas cada 30 días', () => {
   const financial = calculateFlatLoanPricing({
     montoOriginal: 900,
     interesPorcentaje: 10,
@@ -64,7 +64,7 @@ test('calcula préstamo mensual con fechas cada 1 mes', () => {
   assert.equal(financial.interes_por_cuota, 30);
   assert.deepEqual(
     financial.cronograma.map((cuota) => formatDateOnly(cuota.fecha_vencimiento)),
-    ['2026-06-06', '2026-07-06', '2026-08-06']
+    ['2026-06-05', '2026-07-05', '2026-08-04']
   );
 });
 

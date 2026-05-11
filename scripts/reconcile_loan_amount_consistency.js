@@ -12,20 +12,36 @@ const targetLoanId = (() => {
 
 const round2 = (value) => Number((Number(value) || 0).toFixed(2));
 
+const normalizeModalidad = (value) => String(value || '').trim().toUpperCase();
+
 const buildExpectedLoanSummary = (row = {}) => {
   const montoSolicitado = round2(row.monto_solicitado);
   const interes = round2(row.interes);
-  const numSemanas = Number(row.num_semanas) || 0;
-  const totalPagar = round2(montoSolicitado + (montoSolicitado * interes / 100));
-  const pagosSemanales = numSemanas > 0 ? round2(totalPagar / numSemanas) : totalPagar;
+  const modalidad = normalizeModalidad(row.modalidad);
+  const numCuotas = Number(row.numero_cuotas || row.num_semanas) || 0;
+  const formulaTotal = round2(montoSolicitado + (montoSolicitado * interes / 100));
+
+  const baseTotal = modalidad === 'MENSUAL'
+    ? round2(row.total_pagar || row.valor_cuota || row.pagos_semanales || formulaTotal)
+    : formulaTotal;
+
+  const cuotaBase = numCuotas > 0
+    ? round2(baseTotal / numCuotas)
+    : baseTotal;
 
   return {
+    modalidad,
     montoSolicitado,
     interes,
-    totalPagar,
-    pagosSemanales,
-    ganancias: round2(totalPagar - montoSolicitado)
+    totalPagar: baseTotal,
+    valorCuota: cuotaBase,
+    pagosSemanales: cuotaBase,
+    ganancias: round2(baseTotal - montoSolicitado)
   };
+};
+
+const isWithinTolerance = (actual, expected, tolerance = 0.05) => {
+  return Math.abs(round2(actual) - round2(expected)) <= tolerance;
 };
 
 const getErrorMessage = (error) => {
@@ -48,9 +64,12 @@ const main = async () => {
         p.id,
         p.monto_solicitado,
         p.interes,
+        p.modalidad,
         p.num_semanas,
+        p.numero_cuotas,
         p.total_pagar,
         p.pagos_semanales,
+        p.valor_cuota,
         p.ganancias,
         c.monto_referido
       FROM public.prestamos p
@@ -70,19 +89,24 @@ const main = async () => {
     .map((row) => {
       const expected = buildExpectedLoanSummary(row);
       const actualTotal = round2(row.total_pagar);
-      const actualWeekly = round2(row.pagos_semanales);
+      const actualCuota = round2(row.valor_cuota || row.pagos_semanales);
       const totalDiff = round2(actualTotal - expected.totalPagar);
-      const weeklyDiff = round2(actualWeekly - expected.pagosSemanales);
+      const cuotaDiff = round2(actualCuota - expected.valorCuota);
+      const modalidad = normalizeModalidad(row.modalidad);
+      const requiereActualizacion = modalidad === 'MENSUAL'
+        ? !isWithinTolerance(actualCuota, expected.valorCuota)
+        : Math.abs(totalDiff) >= 0.01 || Math.abs(cuotaDiff) >= 0.01;
 
       return {
         id: row.id,
+        modalidad,
         expected,
         actualTotal,
-        actualWeekly,
+        actualCuota,
         montoReferido: round2(row.monto_referido),
         totalDiff,
-        weeklyDiff,
-        requiereActualizacion: Math.abs(totalDiff) >= 0.01 || Math.abs(weeklyDiff) >= 0.01
+        cuotaDiff,
+        requiereActualizacion
       };
     })
     .filter((item) => item.requiereActualizacion);
@@ -94,7 +118,7 @@ const main = async () => {
     if (verbose) {
       inconsistentes.slice(0, 50).forEach((item) => {
         console.log(
-          `- ${item.id}: total=${item.actualTotal} -> ${item.expected.totalPagar}, semanal=${item.actualWeekly} -> ${item.expected.pagosSemanales}`
+          `- ${item.id} [${item.modalidad || 'SIN_MODALIDAD'}]: total=${item.actualTotal} -> ${item.expected.totalPagar}, cuota=${item.actualCuota} -> ${item.expected.valorCuota}`
         );
       });
     }
@@ -124,7 +148,7 @@ const main = async () => {
 
       const discountAmount = Math.min(
         round2(item.montoReferido || 0),
-        item.expected.pagosSemanales,
+        item.expected.valorCuota,
         Math.max(round2(item.expected.totalPagar - item.actualTotal), 0) || item.expected.pagosSemanales
       );
 
