@@ -22,6 +22,10 @@ const {
   resolveInterestPercentageInput,
   resolveNumeroCuotas
 } = require('../services/financial/loanPricingService');
+const {
+  assertClienteEdadMinima,
+  ensureClienteFechaNacimientoColumn
+} = require('../utils/clienteEdad');
 
 // Importar middleware desde auth
 const { authenticateToken, requirePermission } = require('../middleware/auth');
@@ -529,6 +533,8 @@ router.post(
       });
     }
 
+    await ensureClienteFechaNacimientoColumn(sequelize);
+
     // Verificar que el cliente existe
     const cliente = await Cliente.findByPk(cliente_id);
     if (!cliente) {
@@ -544,6 +550,16 @@ router.post(
       return res.status(400).json({
         success: false,
         message: `El cliente está ${cliente.estado.toLowerCase()}. No puede solicitar préstamos.`
+      });
+    }
+
+    try {
+      assertClienteEdadMinima(cliente, { requireFechaNacimiento: true });
+    } catch (error) {
+      await eliminarArchivos(req.files || []);
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'No se pueden otorgar créditos a menores de 21 años'
       });
     }
 

@@ -14,6 +14,11 @@ const {
   deduplicateDocuments
 } = require('../utils/documentStorage');
 const { buildClienteNombreCompleto } = require('../utils/clienteDisplay');
+const {
+  assertClienteEdadMinima,
+  ensureClienteFechaNacimientoColumn,
+  formatDateOnly
+} = require('../utils/clienteEdad');
 const { resolveLoanPaymentCounters } = require('../utils/prestamoAbonos');
 const { authenticateToken, requirePermission } = require('../middleware/auth');
 const { sendOtpVerificationEmail, verifySmtpConfig } = require('../utils/emailVerificationService');
@@ -571,6 +576,7 @@ router.get('/', authenticateToken, requirePermission('clientes.view'), async (re
     await ensureClienteReferidosColumns();
     await ensureClienteEstadoColumns();
     await ensureClienteDocumentoColumn();
+    await ensureClienteFechaNacimientoColumn(sequelize);
     await ensureClienteDocumentosTable();
     await ensureClienteDocumentosTable();
     const { 
@@ -1449,6 +1455,7 @@ router.post(
     await ensureClienteReferidosColumns();
     await ensureClienteEstadoColumns();
     await ensureClienteDocumentoColumn();
+    await ensureClienteFechaNacimientoColumn(sequelize);
     const { 
       nombre, 
       apellido, 
@@ -1519,6 +1526,18 @@ router.post(
       });
     }
 
+    try {
+      assertClienteEdadMinima(
+        { fecha_nacimiento: req.body.fecha_nacimiento },
+        { requireFechaNacimiento: false }
+      );
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'fecha_nacimiento inválida'
+      });
+    }
+
     const cliente = await sequelize.transaction(async (transaction) => {
       const nuevoCliente = await Cliente.create({
         nombre,
@@ -1539,6 +1558,7 @@ router.post(
         estado: estadoNormalizado,
         observaciones,
         documento_identidad_path: documentoIdentidadPath,
+        fecha_nacimiento: formatDateOnly(req.body.fecha_nacimiento),
         fecha_registro: new Date()
       }, { transaction });
 
@@ -1679,6 +1699,21 @@ router.put(
 
     if (updates.es_referido !== undefined) {
       updates.es_referido = updates.es_referido === true || updates.es_referido === 'true' || updates.es_referido === 1 || updates.es_referido === '1';
+    }
+
+    if (req.body.fecha_nacimiento !== undefined) {
+      try {
+        assertClienteEdadMinima(
+          { fecha_nacimiento: req.body.fecha_nacimiento },
+          { requireFechaNacimiento: false }
+        );
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: error.message || 'fecha_nacimiento inválida'
+        });
+      }
+      updates.fecha_nacimiento = formatDateOnly(req.body.fecha_nacimiento);
     }
 
     if (updates.referido_por !== undefined && (updates.referido_por === '' || updates.referido_por === null)) {

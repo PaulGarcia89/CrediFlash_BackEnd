@@ -25,6 +25,11 @@ const {
   calculateFlatLoanPricing,
   resolveInterestPercentageInput
 } = require('../services/financial/loanPricingService');
+const {
+  assertClienteEdadMinima,
+  ensureClienteFechaNacimientoColumn,
+  formatDateOnly
+} = require('../utils/clienteEdad');
 
 const router = express.Router();
 
@@ -436,6 +441,20 @@ router.post('/clientes', async (req, res) => {
       });
     }
 
+    try {
+      assertClienteEdadMinima(
+        { fecha_nacimiento: req.body?.fecha_nacimiento },
+        { requireFechaNacimiento: false }
+      );
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'fecha_nacimiento inválida'
+      });
+    }
+
+    await ensureClienteFechaNacimientoColumn(sequelize);
+
     const cliente = await sequelize.transaction(async (transaction) => {
       const nuevoCliente = await Cliente.create({
         nombre: normalizarTexto(nombre),
@@ -453,6 +472,7 @@ router.post('/clientes', async (req, res) => {
         monto_referido: montoReferidoNumero,
         estado: estado || 'ACTIVO',
         observaciones: normalizarTexto(observaciones) || null,
+        fecha_nacimiento: formatDateOnly(req.body?.fecha_nacimiento),
         fecha_registro: new Date()
       }, { transaction });
 
@@ -490,6 +510,7 @@ router.post('/solicitudes', uploadPublicSolicitudDocumentos, async (req, res) =>
     await ensureOrigenColumns();
     await ensureSolicitudDocumentoTipoColumn();
     await ensureSolicitudFinancialColumns(sequelize);
+    await ensureClienteFechaNacimientoColumn(sequelize);
 
     const {
       cliente_id,
@@ -563,6 +584,16 @@ router.post('/solicitudes', uploadPublicSolicitudDocumentos, async (req, res) =>
     if (cliente.estado !== 'ACTIVO') {
       await eliminarArchivos(req.files || []);
       return res.status(400).json({ success: false, message: `El cliente está ${cliente.estado.toLowerCase()}. No puede solicitar préstamos.` });
+    }
+
+    try {
+      assertClienteEdadMinima(cliente, { requireFechaNacimiento: true });
+    } catch (error) {
+      await eliminarArchivos(req.files || []);
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'No se pueden otorgar créditos a menores de 21 años'
+      });
     }
 
     const archivos = Array.isArray(req.files) ? req.files : [];

@@ -21,6 +21,10 @@ const Cliente = sequelize.define('Cliente', {
   },
   telefono: DataTypes.STRING(20),
   email: DataTypes.STRING(100),
+  fecha_nacimiento: {
+    type: DataTypes.DATEONLY,
+    allowNull: true
+  },
   direccion: DataTypes.STRING(255),
   nombre_contacto: DataTypes.STRING(100),
   apellido_contacto: DataTypes.STRING(100),

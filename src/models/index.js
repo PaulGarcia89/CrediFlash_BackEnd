@@ -22,6 +22,7 @@ const { ensureSolicitudFinancialColumns } = require('../utils/solicitudFinancial
 const { ensurePrestamoFinancialColumns } = require('../utils/prestamoFinancialColumns');
 const { ensureCuotaFinancialColumns } = require('../utils/cuotaFinancialColumns');
 const { ensurePrestamoAbonoParcialColumns } = require('../utils/prestamoAbonos');
+const { ensureClienteFechaNacimientoColumn } = require('../utils/clienteEdad');
 
 // ========== DEFINIR RELACIONES ==========
 
@@ -261,6 +262,8 @@ models.inicializarBaseDeDatos = async (opciones = {}) => {
     console.log('✅ Columnas financieras de cuotas verificadas');
     await ensurePrestamoAbonoParcialColumns(sequelize);
     console.log('✅ Columna de abono parcial de préstamos verificada');
+    await ensureClienteFechaNacimientoColumn(sequelize);
+    console.log('✅ Columna fecha_nacimiento de clientes verificada');
     
     // Crear datos iniciales si la base está vacía
     await models.crearDatosIniciales();

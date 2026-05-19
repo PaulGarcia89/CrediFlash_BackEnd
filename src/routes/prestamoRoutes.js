@@ -27,6 +27,10 @@ const {
   ensureSolicitudFinancialColumns
 } = require('../utils/solicitudFinancialColumns');
 const {
+  assertClienteEdadMinima,
+  ensureClienteFechaNacimientoColumn
+} = require('../utils/clienteEdad');
+const {
   applyWeeklyPaymentToQuotas,
   round2
 } = require('../utils/weeklyPaymentApplication');
@@ -738,6 +742,7 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
 // POST /api/prestamos - Crear préstamo manualmente
 router.post('/', authenticateToken, requirePermission('prestamos.create'), async (req, res) => {
   try {
+    await ensureClienteFechaNacimientoColumn(sequelize);
     await ensurePrestamoFinancialColumns(sequelize);
     await ensureCuotaFinancialColumns(sequelize);
     const { 
@@ -754,6 +759,30 @@ router.post('/', authenticateToken, requirePermission('prestamos.create'), async
       return res.status(400).json({
         success: false,
         message: 'solicitud_id y monto_solicitado son requeridos'
+      });
+    }
+
+    const solicitud = await Solicitud.findByPk(solicitud_id, {
+      include: [{
+        model: Cliente,
+        as: 'cliente',
+        attributes: ['id', 'nombre', 'apellido', 'fecha_nacimiento', 'estado']
+      }]
+    });
+
+    if (!solicitud) {
+      return res.status(404).json({
+        success: false,
+        message: 'Solicitud no encontrada'
+      });
+    }
+
+    try {
+      assertClienteEdadMinima(solicitud.cliente, { requireFechaNacimiento: true });
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'No se pueden otorgar créditos a menores de 21 años'
       });
     }
 
@@ -870,6 +899,7 @@ router.post(
     await ensureSolicitudDocumentoSchema();
     await ensurePrestamoContratoColumn();
     await ensureClienteReferidosColumns();
+    await ensureClienteFechaNacimientoColumn(sequelize);
 
     const solicitud = await Solicitud.findByPk(solicitudId);
     if (!solicitud) {
@@ -879,6 +909,15 @@ router.post(
     const cliente = await Cliente.findByPk(solicitud.cliente_id);
     if (!cliente) {
       return res.status(404).json({ success: false, message: 'Cliente no encontrado para la solicitud' });
+    }
+
+    try {
+      assertClienteEdadMinima(cliente, { requireFechaNacimiento: true });
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'No se pueden otorgar créditos a menores de 21 años'
+      });
     }
 
     if (solicitud.estado !== 'PENDIENTE') {
