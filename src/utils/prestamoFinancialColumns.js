@@ -11,6 +11,12 @@ const ensurePrestamoFinancialColumns = async (sequelize) => {
   `);
 
   await sequelize.query(`
+    ALTER TABLE public.prestamos
+      ALTER COLUMN interes TYPE DECIMAL(15,4)
+      USING COALESCE(interes, 0)::DECIMAL(15,4)
+  `);
+
+  await sequelize.query(`
     UPDATE public.prestamos
     SET
       monto_original = COALESCE(monto_original, monto_solicitado, total_pagar),

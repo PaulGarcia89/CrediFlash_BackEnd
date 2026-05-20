@@ -51,7 +51,7 @@ const Prestamo = sequelize.define('Prestamo', {
     defaultValue: null
   },
   interes: {
-    type: DataTypes.INTEGER,
+    type: DataTypes.DECIMAL(15, 4),
     allowNull: false,
     defaultValue: 0
   },

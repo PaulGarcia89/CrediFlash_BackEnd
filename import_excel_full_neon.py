@@ -158,6 +158,30 @@ def normalize_phone(phone_raw):
         return None
     return p[:20]
 
+def parse_interes_visible(interes_excel):
+    # Conserva el porcentaje visible del Excel, por ejemplo 1.75 o 1,75%
+    if interes_excel is None or clean(interes_excel) == "":
+        return Decimal("0.0000")
+
+    try:
+        if isinstance(interes_excel, str):
+            text = clean(interes_excel).replace("%", "").replace(",", ".")
+            value = Decimal(text)
+        else:
+            value = Decimal(str(interes_excel))
+    except (InvalidOperation, ValueError):
+        return Decimal("0.0000")
+
+    if value < 0:
+        return Decimal("0.0000")
+
+    # Cuando Excel entrega el porcentaje como fracción (ej. 0.0175)
+    # lo convertimos a porcentaje visible (1.75).
+    if value <= Decimal("1"):
+        value = value * Decimal("100")
+
+    return value.quantize(Decimal("0.0000"), rounding=ROUND_HALF_UP)
+
 def parse_interes_to_tasa(interes_excel):
     # Excel viene muchas veces como 0.14 o 14
     if interes_excel is None or clean(interes_excel) == "":
@@ -253,6 +277,11 @@ def ensure_columns(cur):
     cur.execute("ALTER TABLE public.solicitud_documentos ADD COLUMN IF NOT EXISTS tipo_documento character varying(30)")
     cur.execute("ALTER TABLE public.prestamos ADD COLUMN IF NOT EXISTS modalidad character varying(30)")
     cur.execute("ALTER TABLE public.prestamos ADD COLUMN IF NOT EXISTS fecha_aprobacion timestamp without time zone NULL")
+    cur.execute("""
+        ALTER TABLE public.prestamos
+          ALTER COLUMN interes TYPE DECIMAL(15,4)
+          USING COALESCE(interes, 0)::DECIMAL(15,4)
+    """)
 
 def reset_business_tables(cur):
     cur.execute("""
@@ -419,6 +448,7 @@ def load_loan_rows(wb):
 
         monto = d(r[4])
         tasa = parse_interes_to_tasa(r[5])
+        tasa_visible = parse_interes_visible(r[5])
         total = d(r[10], default=str(monto))
         ganancias = d(r[11], default="0.00")
         pago_semanal = d(r[12], default="0.00")
@@ -506,6 +536,7 @@ def load_loan_rows(wb):
             "anio_vencimiento": fecha_venc.year if fecha_venc else None,
             "monto_solicitado": monto,
             "tasa_variable": tasa,
+            "tasa_visible": tasa_visible,
             "total_pagar": total,
             "ganancias": ganancias,
             "pagos_semanales": pago_semanal,
@@ -611,7 +642,7 @@ def main():
                 solicitud_id = str(uuid.uuid4())
                 prestamo_id = str(uuid.uuid4())
 
-                interes_pct_int = int((p["tasa_variable"] * Decimal("100")).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+                interes_visible = p.get("tasa_visible", Decimal("0.0000"))
                 fecha_ini_dt = datetime.combine(p["fecha_inicio"], datetime.min.time())
                 fecha_venc_dt = datetime.combine(p["fecha_vencimiento"], datetime.min.time())
 
@@ -651,7 +682,7 @@ def main():
                     """, (
                         prestamo_id, solicitud_id,
                         fecha_ini_dt, p["fecha_inicio"].strftime("%b"), str(p["fecha_inicio"].year),
-                        p["nombre_full"][:200], p["monto_solicitado"], interes_pct_int, p["modalidad"],
+                        p["nombre_full"][:200], p["monto_solicitado"], interes_visible, p["modalidad"],
                         p["num_semanas"], p["num_dias"], fecha_venc_dt, fecha_ini_dt,
                         p["total_pagar"], p["ganancias"], p["pagos_semanales"], p["pagos_hechos"], p["pagos_pendientes"],
                         p["pagado"], p["pendiente"], p["status"][:100], fecha_venc_dt
