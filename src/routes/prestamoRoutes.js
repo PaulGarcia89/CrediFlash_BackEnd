@@ -79,6 +79,7 @@ const normalizeOperationalStatus = (prestamo = {}) => {
   const cuotasRestantes = resolveCuotasRestantes(prestamo);
   const pendiente = Number(prestamo.pendiente || 0);
 
+  if (cuotasRestantes <= 0 && pendiente <= 0) return 'PAGADO';
   if (rawStatus.includes('LE QUEDAN')) return 'EN_MARCHA';
   if (['NO DEBE NADA', 'PAGADO', 'CANCELADO'].includes(rawStatus)) return 'PAGADO';
   if (['ACTIVO', 'EN_PROCESO', 'EN_MARCHA', 'MOROSO'].includes(rawStatus)) {
