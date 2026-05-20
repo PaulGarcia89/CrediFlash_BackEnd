@@ -65,9 +65,9 @@ const formatMMDDYYYY = (value) => {
   const date = parseDateSafe(value);
   if (!date) return value ? String(value) : '-';
 
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const dd = String(date.getDate()).padStart(2, '0');
-  const yyyy = String(date.getFullYear());
+  const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(date.getUTCDate()).padStart(2, '0');
+  const yyyy = String(date.getUTCFullYear());
 
   return `${mm}/${dd}/${yyyy}`;
 };
