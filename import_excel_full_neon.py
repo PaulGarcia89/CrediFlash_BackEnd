@@ -57,6 +57,14 @@ def clean(s):
 def upper(s):
     return clean(s).upper()
 
+def modality_interval_days(modalidad):
+    mode = upper(modalidad)
+    if mode == "QUINCENAL":
+        return 14
+    if mode == "MENSUAL":
+        return 30
+    return 7
+
 def normalize_name_key(value):
     text = upper(value)
     text = unicodedata.normalize("NFD", text)
@@ -443,8 +451,9 @@ def load_loan_rows(wb):
         fecha_inicio = as_date(r[0], fallback_year=to_int(r[2], datetime.now().year)) or datetime.now().date()
         modalidad = normalize_modalidad(r[6])
         semanas = to_int(r[7], 0)
-        dias = to_int(r[8], max(0, semanas * 7))
-        fecha_venc = as_date(r[9], fallback_year=fecha_inicio.year) or (fecha_inicio + timedelta(days=max(1, semanas) * 7))
+        intervalo = modality_interval_days(modalidad)
+        dias = to_int(r[8], max(0, semanas * intervalo))
+        fecha_venc = as_date(r[9], fallback_year=fecha_inicio.year) or (fecha_inicio + timedelta(days=max(1, semanas) * intervalo))
 
         monto = d(r[4])
         tasa = parse_interes_to_tasa(r[5])
@@ -695,11 +704,12 @@ def main():
                 total_weeks = max(1, p["num_semanas"])
                 remaining_paid_pool = p["pagado"]
                 interes_cuota = (p["ganancias"] / Decimal(total_weeks)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                intervalo = modality_interval_days(p["modalidad"])
 
                 cuotas_rows = []
                 for i in range(1, total_weeks + 1):
                     cuota_id = str(uuid.uuid4())
-                    venc = p["fecha_inicio"] + timedelta(days=7 * i)
+                    venc = p["fecha_inicio"] + timedelta(days=intervalo * i)
 
                     monto_total = p["pagos_semanales"]
                     monto_interes = interes_cuota
