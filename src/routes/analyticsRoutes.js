@@ -6,7 +6,32 @@ const { authenticateToken, requirePermission } = require('../middleware/auth');
 
 const parseFecha = (value) => {
   if (!value) return null;
-  const date = new Date(value);
+
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    const date = new Date(value.getTime());
+    if (value.getHours() === 0 && value.getMinutes() === 0 && value.getSeconds() === 0 && value.getMilliseconds() === 0) {
+      date.setHours(12, 0, 0, 0);
+    }
+    return date;
+  }
+
+  const text = String(value).trim();
+  if (!text) return null;
+
+  const isoDateOnly = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoDateOnly) {
+    const [, yyyy, mm, dd] = isoDateOnly;
+    return new Date(Number(yyyy), Number(mm) - 1, Number(dd), 12, 0, 0, 0);
+  }
+
+  const mmddyyyy = text.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (mmddyyyy) {
+    const [, mm, dd, yyyy] = mmddyyyy;
+    return new Date(Number(yyyy), Number(mm) - 1, Number(dd), 12, 0, 0, 0);
+  }
+
+  const date = new Date(text);
   return Number.isNaN(date.getTime()) ? null : date;
 };
 

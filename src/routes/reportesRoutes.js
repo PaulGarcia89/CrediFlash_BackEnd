@@ -99,7 +99,36 @@ const rowIsEmpty = (row = {}) => Object.values(row).every((value) => String(valu
 
 const parseDateFilter = (value, endOfDay = false) => {
   if (!value) return null;
-  const date = new Date(value);
+
+  if (value instanceof Date) {
+    const date = new Date(value.getTime());
+    if (Number.isNaN(date.getTime())) return null;
+    if (endOfDay) {
+      date.setHours(23, 59, 59, 999);
+    } else {
+      date.setHours(0, 0, 0, 0);
+    }
+    return date;
+  }
+
+  const text = String(value).trim();
+  if (!text) return null;
+
+  let date = null;
+  const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) {
+    const [, yyyy, mm, dd] = iso;
+    date = new Date(Number(yyyy), Number(mm) - 1, Number(dd), 12, 0, 0, 0);
+  } else {
+    const mmddyyyy = text.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (mmddyyyy) {
+      const [, mm, dd, yyyy] = mmddyyyy;
+      date = new Date(Number(yyyy), Number(mm) - 1, Number(dd), 12, 0, 0, 0);
+    } else {
+      date = new Date(text);
+    }
+  }
+
   if (Number.isNaN(date.getTime())) return null;
   if (endOfDay) {
     date.setHours(23, 59, 59, 999);

@@ -3,7 +3,8 @@ const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 const {
   buildInstallmentDates,
-  round2
+  round2,
+  parseFlexibleDate
 } = require('../services/financial/scheduleService');
 const {
   calculateFlatLoanPricing,
@@ -226,7 +227,8 @@ Cuota.prototype.estaVencida = function() {
   }
   
   const hoy = new Date();
-  const fechaVencimiento = new Date(this.fecha_vencimiento);
+  const fechaVencimiento = parseFlexibleDate(this.fecha_vencimiento);
+  if (!fechaVencimiento) return false;
   return hoy > fechaVencimiento;
 };
 
@@ -237,7 +239,8 @@ Cuota.prototype.calcularDiasMora = function() {
   }
   
   const hoy = new Date();
-  const fechaVencimiento = new Date(this.fecha_vencimiento);
+  const fechaVencimiento = parseFlexibleDate(this.fecha_vencimiento);
+  if (!fechaVencimiento) return 0;
   const diffTime = Math.abs(hoy - fechaVencimiento);
   return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 };
@@ -488,7 +491,8 @@ Cuota.obtenerResumenCuotas = async function(prestamoId) {
       vencidas: cuotas.filter(c => {
         if (!c.fecha_vencimiento || c.estado === 'PAGADO') return false;
         const hoy = new Date();
-        const fechaVencimiento = new Date(c.fecha_vencimiento);
+        const fechaVencimiento = parseFlexibleDate(c.fecha_vencimiento);
+        if (!fechaVencimiento) return false;
         return hoy > fechaVencimiento;
       }).length,
       monto_total: parseFloat(cuotas.reduce((sum, c) => sum + parseFloat(c.monto_total || 0), 0).toFixed(2)),

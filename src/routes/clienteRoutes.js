@@ -19,6 +19,7 @@ const {
   ensureClienteFechaNacimientoColumn,
   formatDateOnly
 } = require('../utils/clienteEdad');
+const { parseFlexibleDate } = require('../services/financial/scheduleService');
 const { resolveLoanPaymentCounters } = require('../utils/prestamoAbonos');
 const { authenticateToken, requirePermission } = require('../middleware/auth');
 const { sendOtpVerificationEmail, verifySmtpConfig } = require('../utils/emailVerificationService');
@@ -1356,12 +1357,12 @@ router.get('/:id/score-comportamiento', authenticateToken, requirePermission('cl
     let eventosAtraso = 0;
 
     cuotas.forEach((cuota) => {
-      const fechaV = new Date(cuota.fecha_vencimiento);
+      const fechaV = parseFlexibleDate(cuota.fecha_vencimiento) || new Date(cuota.fecha_vencimiento);
       fechaV.setHours(0, 0, 0, 0);
       const montoTotal = parseFloat(cuota.monto_total || 0);
       const montoPagado = parseFloat(cuota.monto_pagado || 0);
       const pagadaCompleta = montoPagado >= montoTotal && montoTotal > 0;
-      const fechaPago = cuota.fecha_pago ? new Date(cuota.fecha_pago) : null;
+      const fechaPago = cuota.fecha_pago ? (parseFlexibleDate(cuota.fecha_pago) || new Date(cuota.fecha_pago)) : null;
       if (fechaPago) fechaPago.setHours(0, 0, 0, 0);
 
       if (pagadaCompleta && fechaPago && fechaPago <= fechaV) {

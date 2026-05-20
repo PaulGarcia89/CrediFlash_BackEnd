@@ -1,8 +1,10 @@
+const { parseFlexibleDate } = require('../services/financial/scheduleService');
+
 const round2 = (value) => Number((Number(value) || 0).toFixed(2));
 
 const cloneDate = (value) => {
   if (!value) return null;
-  const date = value instanceof Date ? new Date(value.getTime()) : new Date(value);
+  const date = parseFlexibleDate(value) || (value instanceof Date ? new Date(value.getTime()) : new Date(value));
   return Number.isNaN(date.getTime()) ? null : date;
 };
 

@@ -15,7 +15,8 @@ const {
   ensureSolicitudFinancialColumns
 } = require('../utils/solicitudFinancialColumns');
 const {
-  resolveWeeklyFirstDueDate
+  resolveWeeklyFirstDueDate,
+  normalizeToNoon
 } = require('../utils/cuotaSchedule');
 const {
   calculateFlatLoanPricing,
@@ -284,14 +285,14 @@ async function validarMontoSolicitado(clienteId, montoSolicitado) {
 }
 
 function calcularFechaVencimiento(plazoSemanas, fechaInicio = new Date()) {
-  const fecha = new Date(fechaInicio);
+  const fecha = normalizeToNoon(fechaInicio) || new Date();
   const plazoNum = parseInt(plazoSemanas) || 0;
   fecha.setDate(fecha.getDate() + plazoNum * 7);
   return fecha;
 }
 
 function calcularFechaVencimientoSemanal(fechaPrimerVencimiento, plazoSemanas) {
-  const fecha = new Date(fechaPrimerVencimiento);
+  const fecha = normalizeToNoon(fechaPrimerVencimiento) || new Date();
   const semanas = parseInt(plazoSemanas, 10) || 0;
   if (semanas <= 1) {
     return fecha;

@@ -15,9 +15,39 @@ const SOURCE = Object.freeze({
 
 const normalizarTexto = (value) => String(value || '').trim();
 
+const buildLocalDate = (year, month, day) => new Date(Number(year), Number(month) - 1, Number(day), 12, 0, 0, 0);
+
 const parseFechaValida = (value) => {
   if (!value) return null;
-  const fecha = new Date(value);
+
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    const cloned = new Date(value.getTime());
+    if (value.getHours() === 0 && value.getMinutes() === 0 && value.getSeconds() === 0 && value.getMilliseconds() === 0) {
+      return cloned;
+    }
+    if (value.getUTCHours() === 0 && value.getUTCMinutes() === 0 && value.getUTCSeconds() === 0 && value.getUTCMilliseconds() === 0) {
+      return buildLocalDate(value.getUTCFullYear(), value.getUTCMonth() + 1, value.getUTCDate());
+    }
+    return cloned;
+  }
+
+  const text = String(value).trim();
+  if (!text) return null;
+
+  const isoDateOnly = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoDateOnly) {
+    const [, yyyy, mm, dd] = isoDateOnly;
+    return buildLocalDate(yyyy, mm, dd);
+  }
+
+  const isoMidnightZ = text.match(/^(\d{4})-(\d{2})-(\d{2})T00:00:00(?:\.000)?Z$/);
+  if (isoMidnightZ) {
+    const [, yyyy, mm, dd] = isoMidnightZ;
+    return buildLocalDate(yyyy, mm, dd);
+  }
+
+  const fecha = new Date(text);
   return Number.isNaN(fecha.getTime()) ? null : fecha;
 };
 

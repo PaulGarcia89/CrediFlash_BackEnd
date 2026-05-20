@@ -3,6 +3,7 @@ const { Cuota, Prestamo, Solicitud, Cliente } = require('../models');
 const { Op } = require('sequelize');
 const { sendCsv } = require('../utils/exporter');
 const { sendCuotaReminderEmail } = require('../utils/emailNotificationService');
+const { parseFlexibleDate } = require('../services/financial/scheduleService');
 const {
   ensurePrestamoAbonoParcialColumns,
   resolveAbonoParcialAcumulado
@@ -441,8 +442,8 @@ const cuotaController = {
         monto_original: parseFloat(req.body.monto_original || req.body.monto_solicitado || monto_total),
         plazo_meses: parseInt(plazo_meses),
         numero_cuotas: parseInt(req.body.numero_cuotas || req.body.num_semanas || plazo_meses, 10),
-        fecha_inicio: new Date(fecha_inicio),
-        fecha_aprobacion: req.body.fecha_aprobacion ? new Date(req.body.fecha_aprobacion) : null,
+        fecha_inicio: parseFlexibleDate(fecha_inicio) || new Date(),
+        fecha_aprobacion: req.body.fecha_aprobacion ? (parseFlexibleDate(req.body.fecha_aprobacion) || new Date(req.body.fecha_aprobacion)) : null,
         tasa_interes: tasa_interes || 12,
         interes_porcentaje: req.body.interes_porcentaje || req.body.interes || tasa_interes || 12,
         modalidad: req.body.modalidad || 'MENSUAL'
@@ -964,8 +965,8 @@ const cuotaController = {
         monto_original: parseFloat(prestamo.monto_original || prestamo.monto_solicitado || prestamo.total_pagar),
         num_semanas: parseInt(prestamo.numero_cuotas || prestamo.num_semanas),
         numero_cuotas: parseInt(prestamo.numero_cuotas || prestamo.num_semanas),
-        fecha_inicio: new Date(prestamo.fecha_inicio),
-        fecha_aprobacion: prestamo.fecha_aprobacion ? new Date(prestamo.fecha_aprobacion) : null,
+        fecha_inicio: parseFlexibleDate(prestamo.fecha_inicio) || new Date(),
+        fecha_aprobacion: prestamo.fecha_aprobacion ? (parseFlexibleDate(prestamo.fecha_aprobacion) || new Date(prestamo.fecha_aprobacion)) : null,
         interes_porcentaje: parseFloat(prestamo.interes_porcentaje || prestamo.interes || 0),
         modalidad: prestamo.modalidad || 'SEMANAL',
         fecha_primer_vencimiento: prestamo.fecha_primer_vencimiento || null,
@@ -1030,8 +1031,8 @@ const cuotaController = {
             monto_original: parseFloat(prestamo.monto_original || prestamo.monto_solicitado || prestamo.total_pagar),
             num_semanas: parseInt(prestamo.numero_cuotas || prestamo.num_semanas),
             numero_cuotas: parseInt(prestamo.numero_cuotas || prestamo.num_semanas),
-            fecha_inicio: new Date(prestamo.fecha_inicio),
-            fecha_aprobacion: prestamo.fecha_aprobacion ? new Date(prestamo.fecha_aprobacion) : null,
+            fecha_inicio: parseFlexibleDate(prestamo.fecha_inicio) || new Date(),
+            fecha_aprobacion: prestamo.fecha_aprobacion ? (parseFlexibleDate(prestamo.fecha_aprobacion) || new Date(prestamo.fecha_aprobacion)) : null,
             interes_porcentaje: parseFloat(prestamo.interes_porcentaje || prestamo.interes || 0),
             modalidad: prestamo.modalidad || 'SEMANAL',
             fecha_primer_vencimiento: prestamo.fecha_primer_vencimiento || null,

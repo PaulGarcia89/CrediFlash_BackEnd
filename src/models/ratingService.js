@@ -162,7 +162,7 @@ class RatingService {
             const puntualidadPct = totalPagos > 0 ? pagosHechos / totalPagos : 0;
 
             const tiempoDesdeUltimoPrestamoMeses = ultimoPrestamo?.fecha_inicio
-                ? Math.round((now - new Date(ultimoPrestamo.fecha_inicio).getTime()) / (1000 * 60 * 60 * 24 * 30))
+                ? Math.round((now - (require('../services/financial/scheduleService').parseFlexibleDate(ultimoPrestamo.fecha_inicio) || new Date(ultimoPrestamo.fecha_inicio)).getTime()) / (1000 * 60 * 60 * 24 * 30))
                 : null;
 
             const tasaMoraHistorica = prestamosPrevios > 0 ? prestamosEnMora / prestamosPrevios : 0;
@@ -944,7 +944,7 @@ class RatingService {
     
     getHistoryMonths(prestamos) {
         if (prestamos.length < 2) return 0;
-        const dates = prestamos.map(p => new Date(p.fecha));
+        const dates = prestamos.map(p => require('../services/financial/scheduleService').parseFlexibleDate(p.fecha) || new Date(p.fecha));
         const oldest = new Date(Math.min(...dates));
         const newest = new Date(Math.max(...dates));
         const diffMonths = (newest.getFullYear() - oldest.getFullYear()) * 12 + 
@@ -954,7 +954,7 @@ class RatingService {
     
     calculateAnalysisPeriod(prestamos) {
         if (prestamos.length < 2) return 'Período insuficiente';
-        const dates = prestamos.map(p => new Date(p.fecha)).sort((a, b) => a - b);
+        const dates = prestamos.map(p => require('../services/financial/scheduleService').parseFlexibleDate(p.fecha) || new Date(p.fecha)).sort((a, b) => a - b);
         const first = dates[0];
         const last = dates[dates.length - 1];
         return `${first.toISOString().split('T')[0]} al ${last.toISOString().split('T')[0]}`;

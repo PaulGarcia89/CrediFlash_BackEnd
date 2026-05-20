@@ -7,7 +7,23 @@ const { sendCsv } = require('../utils/exporter');
 
 const parseDate = (value, endOfDay = false) => {
   if (!value) return null;
-  const date = new Date(value);
+  const text = String(value).trim();
+  let date = null;
+
+  const isoDateOnly = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoDateOnly) {
+    const [, yyyy, mm, dd] = isoDateOnly;
+    date = new Date(Number(yyyy), Number(mm) - 1, Number(dd), 12, 0, 0, 0);
+  } else {
+    const mmddyyyy = text.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (mmddyyyy) {
+      const [, mm, dd, yyyy] = mmddyyyy;
+      date = new Date(Number(yyyy), Number(mm) - 1, Number(dd), 12, 0, 0, 0);
+    } else {
+      date = new Date(text);
+    }
+  }
+
   if (Number.isNaN(date.getTime())) return null;
   if (endOfDay) {
     date.setHours(23, 59, 59, 999);

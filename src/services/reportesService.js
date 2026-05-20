@@ -2,6 +2,7 @@ const { Op, QueryTypes } = require('sequelize');
 const XLSX = require('xlsx');
 const { sequelize, Cuota, Prestamo, Solicitud, Cliente, Analista } = require('../models');
 const { sendMailWithReportCsv } = require('../utils/emailNotificationService');
+const { formatMMDDYYYY, parseDateSafe } = require('../utils/dateFormat');
 
 const TIMEZONE = 'America/New_York';
 const VERSION = 'v1';
@@ -28,15 +29,6 @@ const toNumber = (value) => {
 
 const round2 = (value) => Number(toNumber(value).toFixed(2));
 
-const formatMMDDYYYY = (value) => {
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const dd = String(date.getDate()).padStart(2, '0');
-  const yyyy = String(date.getFullYear());
-  return `${mm}/${dd}/${yyyy}`;
-};
-
 const toYmdString = (date) => {
   const yyyy = String(date.getFullYear());
   const mm = String(date.getMonth() + 1).padStart(2, '0');
@@ -46,20 +38,12 @@ const toYmdString = (date) => {
 
 const parseDateStrict = (value) => {
   if (!value) return null;
+
   const text = String(value).trim();
+  if (!text) return null;
 
-  const mmdd = text.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (mmdd) {
-    const [, mm, dd, yyyy] = mmdd;
-    const parsed = new Date(Number(yyyy), Number(mm) - 1, Number(dd), 0, 0, 0, 0);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  }
-
-  const ymd = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (ymd) {
-    const [, yyyy, mm, dd] = ymd;
-    const parsed = new Date(Number(yyyy), Number(mm) - 1, Number(dd), 0, 0, 0, 0);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(text) || /^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    return parseDateSafe(text);
   }
 
   return null;
@@ -127,7 +111,7 @@ const cuotaInteresCobrado = (cuota) => {
 };
 
 const calculateMora = (cuota, today) => {
-  const fechaVencimiento = parseDateStrict(cuota.fecha_vencimiento) || new Date(cuota.fecha_vencimiento);
+  const fechaVencimiento = parseDateStrict(cuota.fecha_vencimiento) || parseDateSafe(cuota.fecha_vencimiento);
   if (!fechaVencimiento || Number.isNaN(fechaVencimiento.getTime())) return null;
 
   const montoTotal = toNumber(cuota.monto_total);
@@ -135,7 +119,7 @@ const calculateMora = (cuota, today) => {
   const saldo = round2(Math.max(montoTotal - montoPagado, 0));
   if (saldo <= 0) return null;
 
-  const fechaPago = cuota.fecha_pago ? new Date(cuota.fecha_pago) : null;
+  const fechaPago = cuota.fecha_pago ? parseDateSafe(cuota.fecha_pago) : null;
   if (fechaPago && fechaPago > fechaVencimiento) {
     const dias = Math.ceil((fechaPago.getTime() - fechaVencimiento.getTime()) / (1000 * 60 * 60 * 24));
     return { dias, estado: 'MORA_PAGADA', saldo };

@@ -107,7 +107,7 @@ const resolveCuotasRestantes = (prestamo = {}) => {
 };
 
 const calcularFechaVencimiento = (fechaInicio, numSemanas) => {
-  const fecha = new Date(fechaInicio);
+  const fecha = normalizeToNoon(fechaInicio) || new Date();
   const semanas = parseInt(numSemanas) || 0;
   fecha.setDate(fecha.getDate() + semanas * 7);
   return fecha;
@@ -163,7 +163,7 @@ const generarPlanCuotasSemanales = ({
   });
 
   for (let index = 1; index <= semanas; index += 1) {
-    const fechaVencimiento = fechasVencimiento[index - 1] || new Date(fechaInicio);
+    const fechaVencimiento = fechasVencimiento[index - 1] || normalizeToNoon(fechaInicio) || new Date();
 
     const esUltima = index === semanas;
     const montoTotalCuota = esUltima
@@ -515,10 +515,10 @@ router.get('/', authenticateToken, requirePermission('prestamos.view'), async (r
     if (fecha_desde || fecha_hasta) {
       where.fecha_inicio = {};
       if (fecha_desde) {
-        where.fecha_inicio[Op.gte] = new Date(fecha_desde);
+        where.fecha_inicio[Op.gte] = normalizeToNoon(fecha_desde);
       }
       if (fecha_hasta) {
-        where.fecha_inicio[Op.lte] = new Date(fecha_hasta);
+        where.fecha_inicio[Op.lte] = normalizeToNoon(fecha_hasta);
       }
     }
 
@@ -1337,7 +1337,7 @@ router.post('/:id/pago-semanal', authenticateToken, requirePermission('prestamos
         const total = parseFloat(item.monto_total || 0);
         const pagado = parseFloat(item.monto_pagado || 0);
         const saldo = Math.max(parseFloat((total - pagado).toFixed(2)), 0);
-        const fechaVto = new Date(item.fecha_vencimiento);
+        const fechaVto = normalizeToNoon(item.fecha_vencimiento) || new Date();
         fechaVto.setHours(0, 0, 0, 0);
 
         acc.pagadoTotal += Math.min(pagado, total);
