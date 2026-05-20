@@ -27,7 +27,6 @@ const {
   ensureSolicitudFinancialColumns
 } = require('../utils/solicitudFinancialColumns');
 const {
-  assertClienteEdadMinima,
   ensureClienteFechaNacimientoColumn
 } = require('../utils/clienteEdad');
 const {
@@ -778,15 +777,6 @@ router.post('/', authenticateToken, requirePermission('prestamos.create'), async
       });
     }
 
-    try {
-      assertClienteEdadMinima(solicitud.cliente, { requireFechaNacimiento: true });
-    } catch (error) {
-      return res.status(400).json({
-        success: false,
-        message: error.message || 'No se pueden otorgar créditos a menores de 21 años'
-      });
-    }
-
     const fechaInicioPrestamo = normalizeToNoon(fecha_inicio) || normalizeToNoon(new Date());
     const cuotasInput = numero_cuotas !== undefined && numero_cuotas !== null && `${numero_cuotas}` !== ''
       ? numero_cuotas
@@ -910,15 +900,6 @@ router.post(
     const cliente = await Cliente.findByPk(solicitud.cliente_id);
     if (!cliente) {
       return res.status(404).json({ success: false, message: 'Cliente no encontrado para la solicitud' });
-    }
-
-    try {
-      assertClienteEdadMinima(cliente, { requireFechaNacimiento: true });
-    } catch (error) {
-      return res.status(400).json({
-        success: false,
-        message: error.message || 'No se pueden otorgar créditos a menores de 21 años'
-      });
     }
 
     if (solicitud.estado !== 'PENDIENTE') {

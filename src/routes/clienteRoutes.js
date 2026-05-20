@@ -1529,7 +1529,7 @@ router.post(
     try {
       assertClienteEdadMinima(
         { fecha_nacimiento: req.body.fecha_nacimiento },
-        { requireFechaNacimiento: false }
+        { requireFechaNacimiento: true }
       );
     } catch (error) {
       return res.status(400).json({
@@ -1699,21 +1699,6 @@ router.put(
 
     if (updates.es_referido !== undefined) {
       updates.es_referido = updates.es_referido === true || updates.es_referido === 'true' || updates.es_referido === 1 || updates.es_referido === '1';
-    }
-
-    if (req.body.fecha_nacimiento !== undefined) {
-      try {
-        assertClienteEdadMinima(
-          { fecha_nacimiento: req.body.fecha_nacimiento },
-          { requireFechaNacimiento: false }
-        );
-      } catch (error) {
-        return res.status(400).json({
-          success: false,
-          message: error.message || 'fecha_nacimiento inválida'
-        });
-      }
-      updates.fecha_nacimiento = formatDateOnly(req.body.fecha_nacimiento);
     }
 
     if (updates.referido_por !== undefined && (updates.referido_por === '' || updates.referido_por === null)) {

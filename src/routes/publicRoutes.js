@@ -26,7 +26,6 @@ const {
   resolveInterestPercentageInput
 } = require('../services/financial/loanPricingService');
 const {
-  assertClienteEdadMinima,
   ensureClienteFechaNacimientoColumn,
   formatDateOnly
 } = require('../utils/clienteEdad');
@@ -438,18 +437,6 @@ router.post('/clientes', async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'monto_referido debe ser un número mayor o igual a 0'
-      });
-    }
-
-    try {
-      assertClienteEdadMinima(
-        { fecha_nacimiento: req.body?.fecha_nacimiento },
-        { requireFechaNacimiento: false }
-      );
-    } catch (error) {
-      return res.status(400).json({
-        success: false,
-        message: error.message || 'fecha_nacimiento inválida'
       });
     }
 

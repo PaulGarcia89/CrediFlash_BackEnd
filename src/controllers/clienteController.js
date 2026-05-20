@@ -25,12 +25,14 @@ exports.get = async (req, res) => {
 
 exports.create = async (req, res) => {
   try {
-    if (req.body?.fecha_nacimiento !== undefined) {
-      assertClienteEdadMinima(
-        { fecha_nacimiento: req.body.fecha_nacimiento },
-        { requireFechaNacimiento: false }
-      );
+    if (!String(req.body?.fecha_nacimiento || '').trim()) {
+      throw new Error('Debes ingresar la fecha de nacimiento del cliente.');
     }
+
+    assertClienteEdadMinima(
+      { fecha_nacimiento: req.body.fecha_nacimiento },
+      { requireFechaNacimiento: true }
+    );
 
     const payload = { ...req.body };
     if (payload.fecha_nacimiento !== undefined) {
@@ -48,13 +50,6 @@ exports.update = async (req, res) => {
   try {
     const item = await Cliente.findByPk(req.params.id);
     if (!item) return res.status(404).json({ error: 'No encontrado' });
-    if (req.body?.fecha_nacimiento !== undefined) {
-      assertClienteEdadMinima(
-        { fecha_nacimiento: req.body.fecha_nacimiento },
-        { requireFechaNacimiento: false }
-      );
-      req.body.fecha_nacimiento = formatDateOnly(req.body.fecha_nacimiento);
-    }
     await item.update(req.body);
     res.json(item);
   } catch (err) {
