@@ -400,6 +400,12 @@ def load_loan_rows(wb):
         return []
 
     rows = []
+    col_pagos_hechos = headers.get("PAGOS HECHOS")
+    col_pagos_pend = headers.get("PAGOS PENDIENTES")
+    col_pagado = headers.get("PAGADO")
+    col_balance = headers.get("BALANCE")
+    col_status = headers.get("ESTATUS")
+
     for idx, r in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
         nombre = clean(r[3])
         if not nombre or upper(nombre) == "NOMBRE":
@@ -417,12 +423,12 @@ def load_loan_rows(wb):
         ganancias = d(r[11], default="0.00")
         pago_semanal = d(r[12], default="0.00")
 
-        # Resumen real de esta hoja: columnas 14 a 18
-        pagos_hechos_col = to_int(r[13], 0)
-        pagos_pend_col = to_int(r[14], 0)
-        pagado_col = d(r[15], default="0.00")
-        balance_col = d(r[16], default="0.00")
-        estatus_col = clean(r[17])
+        # Resumen real de esta hoja: columnas con encabezados explícitos
+        pagos_hechos_col = to_int(r[col_pagos_hechos], 0) if col_pagos_hechos is not None else 0
+        pagos_pend_col = to_int(r[col_pagos_pend], 0) if col_pagos_pend is not None else 0
+        pagado_col = d(r[col_pagado], default="0.00") if col_pagado is not None else Decimal("0.00")
+        balance_col = d(r[col_balance], default="0.00") if col_balance is not None else Decimal("0.00")
+        estatus_col = clean(r[col_status]) if col_status is not None else ""
 
         # En esta hoja no hay checkboxes confiables, así que usamos el valor numérico
         pagos_hechos_checks = pagos_hechos_col
@@ -436,9 +442,9 @@ def load_loan_rows(wb):
 
         # Priorizamos columnas resumen si vienen informadas
         resumen_informado = (
-            clean(r[13]) not in {"", "-"} or
-            clean(r[14]) not in {"", "-"} or
-            clean(r[17]) not in {"", "-"}
+            (col_pagos_hechos is not None and clean(r[col_pagos_hechos]) not in {"", "-"}) or
+            (col_pagos_pend is not None and clean(r[col_pagos_pend]) not in {"", "-"}) or
+            (col_status is not None and clean(r[col_status]) not in {"", "-"})
         )
 
         if resumen_informado:
