@@ -586,16 +586,6 @@ router.post('/solicitudes', uploadPublicSolicitudDocumentos, async (req, res) =>
       return res.status(400).json({ success: false, message: `El cliente está ${cliente.estado.toLowerCase()}. No puede solicitar préstamos.` });
     }
 
-    try {
-      assertClienteEdadMinima(cliente, { requireFechaNacimiento: true });
-    } catch (error) {
-      await eliminarArchivos(req.files || []);
-      return res.status(400).json({
-        success: false,
-        message: error.message || 'No se pueden otorgar créditos a menores de 21 años'
-      });
-    }
-
     const archivos = Array.isArray(req.files) ? req.files : [];
     let documentosClasificados = [];
     try {
