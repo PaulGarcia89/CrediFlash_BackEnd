@@ -22,8 +22,8 @@ DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
 SKIP_RESET = os.environ.get("SKIP_RESET", "false").lower() == "true"
 ALLOW_CLIENT_FALLBACK = os.environ.get("ALLOW_CLIENT_FALLBACK", "false").lower() == "true"
 
-SHEET_CLIENTES = "REGISTRO CLIENTES"
-SHEET_PRESTAMOS = "CONTROL PRESTAMOS"
+SHEET_CLIENTES = "CLIENTES"
+SHEET_PRESTAMOS = "PRESTAMOS"
 
 OUT_ERRORS_CSV = "reporte_errores_importacion.csv"
 ORIGEN_TAG = "CARGA_EXCEL_MARZO_2026"
@@ -318,7 +318,7 @@ def load_existing_clients_map(cur):
 # Parsing Excel
 # =========================
 def load_client_rows(wb):
-    ws = get_sheet_by_candidates(wb, [SHEET_CLIENTES, "Sheet1", "SHEET1"], required=False)
+    ws = get_sheet_by_candidates(wb, [SHEET_CLIENTES, "REGISTRO CLIENTES", "Sheet1", "SHEET1"], required=False)
     if ws is None:
         print("ℹ️ No se encontró hoja de clientes. Se omite carga de clientes.")
         return []
@@ -648,7 +648,7 @@ def main():
                         p["nombre_full"][:200], p["monto_solicitado"], interes_pct_int, p["modalidad"],
                         p["num_semanas"], p["num_dias"], fecha_venc_dt, fecha_ini_dt,
                         p["total_pagar"], p["ganancias"], p["pagos_semanales"], p["pagos_hechos"], p["pagos_pendientes"],
-                        p["pagado"], p["pendiente"], p["status"][:100], p.get("anio_vencimiento")
+                        p["pagado"], p["pendiente"], p["status"][:100], fecha_venc_dt
                     ))
 
                 created["solicitudes"] += 1
