@@ -66,6 +66,26 @@ test('resolveLoanPaymentCounters usa el monto pagado real aunque el estado esté
   assert.equal(counters.abonoParcialAcumulado, 200);
 });
 
+test('resolveLoanPaymentCounters prioriza el estatus textual cuando indica pagos pendientes exactos', () => {
+  const prestamo = {
+    num_semanas: 6,
+    status: 'LE QUEDAN 5 PAGOS POR PAGAR',
+    pendiente: 641.98,
+    abono_parcial_acumulado: 128,
+    cuotas: buildCuotas([
+      { total: 128.33, pagado: 128, estado: 'PENDIENTE' },
+      { total: 128.33, pagado: 0, estado: 'PENDIENTE' }
+    ])
+  };
+
+  const counters = resolveLoanPaymentCounters(prestamo);
+
+  assert.equal(counters.pagosHechos, 1);
+  assert.equal(counters.cuotasRestantes, 5);
+  assert.equal(counters.saldoPendiente, 641.98);
+  assert.equal(counters.abonoParcialAcumulado, 128);
+});
+
 test('resolveLoanPaymentCounters cae a los contadores persistidos si no hay cuotas cargadas', () => {
   const counters = resolveLoanPaymentCounters({
     num_semanas: 4,

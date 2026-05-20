@@ -1,5 +1,21 @@
 const round2 = (value) => Number((Number(value) || 0).toFixed(2));
 
+const resolvePendingFromStatus = (status) => {
+  const raw = String(status || '').toUpperCase();
+
+  if (raw.includes('NO DEBE NADA') || raw === 'PAGADO' || raw === 'CANCELADO') {
+    return { cuotasRestantes: 0, pagosHechos: null };
+  }
+
+  const match = raw.match(/LE\s+QUEDAN\s+(\d+)\s+PAGOS?/);
+  if (match?.[1]) {
+    const cuotasRestantes = Math.max(parseInt(match[1], 10), 0);
+    return { cuotasRestantes, pagosHechos: cuotasRestantes >= 0 ? null : null };
+  }
+
+  return null;
+};
+
 const ensurePrestamoAbonoParcialColumns = async (sequelize) => {
   await sequelize.query(`
     ALTER TABLE public.prestamos
@@ -52,6 +68,21 @@ const resolveAbonoParcialAcumulado = (cuotas = []) => {
 };
 
 const resolveLoanPaymentCounters = (prestamo = {}) => {
+  const statusFromText = resolvePendingFromStatus(prestamo?.status);
+  if (statusFromText) {
+    const numSemanas = Number(prestamo?.num_semanas);
+    const pagosHechos = Number.isFinite(numSemanas)
+      ? Math.max(Math.floor(numSemanas) - statusFromText.cuotasRestantes, 0)
+      : null;
+
+    return {
+      pagosHechos: Number.isFinite(pagosHechos) ? pagosHechos : 0,
+      cuotasRestantes: statusFromText.cuotasRestantes,
+      saldoPendiente: Number.isFinite(Number(prestamo?.pendiente)) ? round2(Math.max(prestamo.pendiente, 0)) : 0,
+      abonoParcialAcumulado: round2(prestamo?.abono_parcial_acumulado || 0)
+    };
+  }
+
   const cuotas = Array.isArray(prestamo?.cuotas) ? prestamo.cuotas : [];
   if (cuotas.length > 0) {
     const resumen = summarizeLoanQuotas(cuotas);
