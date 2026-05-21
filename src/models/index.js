@@ -8,6 +8,7 @@ const Analista = require('./Analista');
 const ClienteEmailVerificacion = require('./ClienteEmailVerificacion');
 const ModeloAprobacion = require('./ModeloAprobacion');
 const Solicitud = require('./Solicitud');
+const SolicitudShortForm = require('./SolicitudShortForm');
 const SolicitudDocumento = require('./SolicitudDocumento');
 const Prestamo = require('./Prestamo');
 const Cuota = require('./Cuota');
@@ -227,6 +228,7 @@ const models = {
   ClienteEmailVerificacion,
   ModeloAprobacion,
   Solicitud,
+  SolicitudShortForm,
   SolicitudDocumento,
   Prestamo,
   Cuota,
@@ -365,6 +367,7 @@ models.obtenerEstadisticas = async () => {
       totalClientes,
       totalAnalistas,
       totalSolicitudes,
+      totalShortForms,
       totalPrestamos,
       totalCuotas,
       solicitudesPendientes,
@@ -374,6 +377,7 @@ models.obtenerEstadisticas = async () => {
       Cliente.count(),
       Analista.count(),
       Solicitud.count(),
+      SolicitudShortForm.count(),
       Prestamo.count(),
       Cuota.count(),
       Solicitud.count({ where: { estado: 'PENDIENTE' } }),
@@ -388,6 +392,9 @@ models.obtenerEstadisticas = async () => {
         total: totalSolicitudes,
         pendientes: solicitudesPendientes,
         aprobadas: totalSolicitudes - solicitudesPendientes
+      },
+      solicitudesShortForm: {
+        total: totalShortForms
       },
       prestamos: {
         total: totalPrestamos,
@@ -408,7 +415,7 @@ models.buscarPorTexto = async (texto) => {
   try {
     const { Op } = require('sequelize');
     
-    const [clientes, analistas, solicitudes] = await Promise.all([
+    const [clientes, analistas, solicitudes, shortForms] = await Promise.all([
       Cliente.findAll({
         where: {
           [Op.or]: [
@@ -444,6 +451,10 @@ models.buscarPorTexto = async (texto) => {
           ]
         },
         limit: 10
+      }),
+      SolicitudShortForm.findAll({
+        order: [['created_at', 'DESC']],
+        limit: 10
       })
     ]);
     
@@ -451,7 +462,8 @@ models.buscarPorTexto = async (texto) => {
       clientes,
       analistas,
       solicitudes,
-      total: clientes.length + analistas.length + solicitudes.length
+      solicitudesShortForm: shortForms,
+      total: clientes.length + analistas.length + solicitudes.length + shortForms.length
     };
   } catch (error) {
     console.error('Error en búsqueda por texto:', error);

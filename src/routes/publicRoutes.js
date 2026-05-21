@@ -7,6 +7,7 @@ const { Op } = require('sequelize');
 const {
   Cliente,
   Solicitud,
+  SolicitudShortForm,
   SolicitudDocumento,
   ClienteEmailVerificacion,
   ModeloAprobacion,
@@ -29,6 +30,10 @@ const {
   ensureClienteFechaNacimientoColumn,
   formatDateOnly
 } = require('../utils/clienteEdad');
+const {
+  authenticateToken,
+  requirePermission
+} = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -78,6 +83,55 @@ const normalizarTexto = (value) => String(value || '').trim();
 const normalizarEmail = (email) => String(email || '').trim().toLowerCase();
 const validarFormatoEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || '').trim());
 const generarCodigoOtp = () => String(Math.floor(100000 + Math.random() * 900000));
+const normalizarTextoNullable = (value) => {
+  const text = normalizarTexto(value);
+  return text ? text : null;
+};
+const normalizarBoolean = (value, defaultValue = false) => {
+  if (value === undefined || value === null || value === '') return defaultValue;
+  if (typeof value === 'boolean') return value;
+  const normalized = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'si', 'sí', 'on'].includes(normalized)) return true;
+  if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+  return defaultValue;
+};
+const normalizarDecimalNullable = (value) => {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(String(value).replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : null;
+};
+const getRequestIp = (req) => {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string' && forwarded.trim()) {
+    return forwarded.split(',')[0].trim();
+  }
+  return req.ip || req.connection?.remoteAddress || 'unknown';
+};
+const mergeShortFormSources = (req) => ({
+  ...(req.query || {}),
+  ...(req.body || {})
+});
+const buildShortFormTrackingPayload = (sourceData = {}) => ({
+  manual: sourceData.manual,
+  entry_source: sourceData.entry_source,
+  requested_amount_source: sourceData.requested_amount_source,
+  source: sourceData.source,
+  ad_id: sourceData.ad_id,
+  campaign_id: sourceData.campaign_id,
+  campaign_name: sourceData.campaign_name,
+  adset_id: sourceData.adset_id,
+  adset_name: sourceData.adset_name,
+  origin: sourceData.origin,
+  aid: sourceData.aid,
+  utm_medium: sourceData.utm_medium,
+  utm_source: sourceData.utm_source,
+  utm_id: sourceData.utm_id,
+  utm_content: sourceData.utm_content,
+  utm_term: sourceData.utm_term,
+  utm_campaign: sourceData.utm_campaign,
+  fbclid: sourceData.fbclid,
+  requested_amount: sourceData.requested_amount
+});
 
 const buildOtpHash = (email, code) =>
   crypto.createHash('sha256').update(`${normalizarEmail(email)}|${String(code)}|${process.env.OTP_SECRET || 'crediflash-otp-secret'}`).digest('hex');
@@ -673,6 +727,157 @@ router.post('/solicitudes', uploadPublicSolicitudDocumentos, async (req, res) =>
     return res.status(500).json({
       success: false,
       message: 'Error creando solicitud pública'
+    });
+  }
+});
+
+// POST /api/public/solicitudes-short-form
+router.post('/solicitudes-short-form', async (req, res) => {
+  try {
+    const ip = getRequestIp(req);
+    if (isRateLimited({ scope: 'public-short-form-create', key: ip, limit: 40, windowMs: 60 * 60 * 1000 })) {
+      return res.status(429).json({ success: false, message: 'Rate limit excedido. Intenta nuevamente más tarde' });
+    }
+
+    const sourceData = mergeShortFormSources(req);
+    const nombre = normalizarTexto(sourceData.nombre);
+    const apellido = normalizarTexto(sourceData.apellido);
+    const telefono = normalizarTexto(sourceData.telefono);
+    const email = normalizarEmail(sourceData.email);
+    const montoSolicitado = normalizarDecimalNullable(sourceData.monto_solicitado ?? sourceData.requested_amount);
+    const modalidad = normalizarModalidad(sourceData.modalidad || 'SEMANAL');
+    const idioma = normalizarTexto(sourceData.idioma || 'es') || 'es';
+    const origen = normalizarTexto(sourceData.origen || sourceData.origin || 'SHORT_FORM') || 'SHORT_FORM';
+    const estado = normalizarTexto(sourceData.estado || 'PENDIENTE').toUpperCase() || 'PENDIENTE';
+
+    const errores = [];
+    if (!nombre) errores.push('nombre es requerido');
+    if (!apellido) errores.push('apellido es requerido');
+    if (!telefono) errores.push('telefono es requerido');
+    if (!email || !validarFormatoEmail(email)) errores.push('email válido es requerido');
+    if (montoSolicitado === null || montoSolicitado <= 0) errores.push('monto_solicitado es requerido y debe ser mayor a 0');
+    if (!MODALIDADES_PERMITIDAS.includes(modalidad)) errores.push('modalidad inválida. Use SEMANAL, QUINCENAL o MENSUAL');
+
+    if (errores.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Errores de validación',
+        errors: errores
+      });
+    }
+
+    const registro = await SolicitudShortForm.create({
+      nombre,
+      apellido,
+      telefono,
+      email,
+      monto_solicitado: montoSolicitado,
+      requested_amount: normalizarDecimalNullable(sourceData.requested_amount) ?? montoSolicitado,
+      modalidad,
+      idioma,
+      origen,
+      origin: normalizarTextoNullable(sourceData.origin),
+      source: normalizarTextoNullable(sourceData.source),
+      estado,
+      manual: normalizarBoolean(sourceData.manual, false),
+      entry_source: normalizarTextoNullable(sourceData.entry_source),
+      requested_amount_source: normalizarTextoNullable(sourceData.requested_amount_source),
+      ad_id: normalizarTextoNullable(sourceData.ad_id),
+      campaign_id: normalizarTextoNullable(sourceData.campaign_id),
+      campaign_name: normalizarTextoNullable(sourceData.campaign_name),
+      adset_id: normalizarTextoNullable(sourceData.adset_id),
+      adset_name: normalizarTextoNullable(sourceData.adset_name),
+      aid: normalizarTextoNullable(sourceData.aid),
+      utm_medium: normalizarTextoNullable(sourceData.utm_medium),
+      utm_source: normalizarTextoNullable(sourceData.utm_source),
+      utm_id: normalizarTextoNullable(sourceData.utm_id),
+      utm_content: normalizarTextoNullable(sourceData.utm_content),
+      utm_term: normalizarTextoNullable(sourceData.utm_term),
+      utm_campaign: normalizarTextoNullable(sourceData.utm_campaign),
+      fbclid: normalizarTextoNullable(sourceData.fbclid),
+      ip_address: ip,
+      user_agent: normalizarTextoNullable(req.headers['user-agent']),
+      tracking_payload: buildShortFormTrackingPayload(sourceData),
+      created_at: new Date(),
+      updated_at: new Date()
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: 'Solicitud short form creada correctamente',
+      data: {
+        id: registro.id,
+        estado: registro.estado,
+        created_at: registro.created_at
+      }
+    });
+  } catch (error) {
+    console.error('Error creando solicitud short form:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Error creando solicitud short form'
+    });
+  }
+});
+
+// GET /api/public/solicitudes-short-form
+router.get('/solicitudes-short-form', authenticateToken, requirePermission('solicitudes.view'), async (req, res) => {
+  try {
+    const page = Math.max(Number(req.query.page || 1), 1);
+    const limit = Math.min(Math.max(Number(req.query.limit || 20), 1), 100);
+    const offset = (page - 1) * limit;
+    const { estado, origen, origin, search } = req.query || {};
+
+    const where = {};
+
+    if (estado && String(estado).trim()) {
+      where.estado = String(estado).trim().toUpperCase();
+    }
+
+    if (origen && String(origen).trim()) {
+      where.origen = String(origen).trim();
+    }
+
+    if (origin && String(origin).trim()) {
+      where.origin = String(origin).trim();
+    }
+
+    if (search && String(search).trim()) {
+      const term = `%${String(search).trim()}%`;
+      where[Op.or] = [
+        { nombre: { [Op.iLike]: term } },
+        { apellido: { [Op.iLike]: term } },
+        { telefono: { [Op.iLike]: term } },
+        { email: { [Op.iLike]: term } },
+        { source: { [Op.iLike]: term } },
+        { origin: { [Op.iLike]: term } },
+        { campaign_name: { [Op.iLike]: term } },
+        { adset_name: { [Op.iLike]: term } }
+      ];
+    }
+
+    const { count, rows } = await SolicitudShortForm.findAndCountAll({
+      where,
+      order: [['created_at', 'DESC']],
+      limit,
+      offset
+    });
+
+    return res.json({
+      success: true,
+      data: rows,
+      pagination: {
+        total: count,
+        page,
+        limit,
+        pages: Math.ceil(count / limit)
+      }
+    });
+  } catch (error) {
+    console.error('Error listando solicitudes short form:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error obteniendo solicitudes short form'
     });
   }
 });

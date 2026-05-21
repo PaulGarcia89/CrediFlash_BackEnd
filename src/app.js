@@ -97,6 +97,10 @@ app.get('/', (req, res) => {
         ejecutarModeloNuevo: 'POST /api/solicitudes/:id/ejecutar-modelo-nuevo',
         ejecutarModeloAntiguo: 'POST /api/solicitudes/:id/ejecutar-modelo-antiguo'
       },
+      solicitudesShortForm: {
+        create: 'POST /api/public/solicitudes-short-form',
+        list: 'GET /api/public/solicitudes-short-form'
+      },
       prestamos: {
         create: 'POST /api/prestamos',
         list: 'GET /api/prestamos',
